@@ -1,0 +1,118 @@
+{
+  "Version": 1,
+  "WorkspaceRootPath": "D:\\SSEC\\4. Automation\\SBM development\\Software gateway\\PLCGateway\\",
+  "Documents": [
+    {
+      "AbsoluteMoniker": "D:0:0:{81F28616-E6B8-88DF-911D-6B585B045FBD}|PLCGateway\\PLCGateway.csproj|d:\\ssec\\4. automation\\sbm development\\software gateway\\plcgateway\\plcgateway\\appsettings.json||{90A6B3A7-C1A3-4009-A288-E2FF89E96FA0}",
+      "RelativeMoniker": "D:0:0:{81F28616-E6B8-88DF-911D-6B585B045FBD}|PLCGateway\\PLCGateway.csproj|solutionrelative:plcgateway\\appsettings.json||{90A6B3A7-C1A3-4009-A288-E2FF89E96FA0}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{81F28616-E6B8-88DF-911D-6B585B045FBD}|PLCGateway\\PLCGateway.csproj|d:\\ssec\\4. automation\\sbm development\\software gateway\\plcgateway\\plcgateway\\gatewayworker.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{81F28616-E6B8-88DF-911D-6B585B045FBD}|PLCGateway\\PLCGateway.csproj|solutionrelative:plcgateway\\gatewayworker.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{81F28616-E6B8-88DF-911D-6B585B045FBD}|PLCGateway\\PLCGateway.csproj|d:\\ssec\\4. automation\\sbm development\\software gateway\\plcgateway\\plcgateway\\program.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{81F28616-E6B8-88DF-911D-6B585B045FBD}|PLCGateway\\PLCGateway.csproj|solutionrelative:plcgateway\\program.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{81F28616-E6B8-88DF-911D-6B585B045FBD}|PLCGateway\\PLCGateway.csproj|d:\\ssec\\4. automation\\sbm development\\software gateway\\plcgateway\\plcgateway\\plcservice.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{81F28616-E6B8-88DF-911D-6B585B045FBD}|PLCGateway\\PLCGateway.csproj|solutionrelative:plcgateway\\plcservice.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{81F28616-E6B8-88DF-911D-6B585B045FBD}|PLCGateway\\PLCGateway.csproj|d:\\ssec\\4. automation\\sbm development\\software gateway\\plcgateway\\plcgateway\\databaseservice.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{81F28616-E6B8-88DF-911D-6B585B045FBD}|PLCGateway\\PLCGateway.csproj|solutionrelative:plcgateway\\databaseservice.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{81F28616-E6B8-88DF-911D-6B585B045FBD}|PLCGateway\\PLCGateway.csproj|d:\\ssec\\4. automation\\sbm development\\software gateway\\plcgateway\\plcgateway\\plcaddress.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{81F28616-E6B8-88DF-911D-6B585B045FBD}|PLCGateway\\PLCGateway.csproj|solutionrelative:plcgateway\\plcaddress.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    }
+  ],
+  "DocumentGroupContainers": [
+    {
+      "Orientation": 0,
+      "VerticalTabListWidth": 256,
+      "DocumentGroups": [
+        {
+          "DockedWidth": 200,
+          "SelectedChildIndex": 4,
+          "Children": [
+            {
+              "$type": "Document",
+              "DocumentIndex": 1,
+              "Title": "GatewayWorker.cs",
+              "DocumentMoniker": "D:\\SSEC\\4. Automation\\SBM development\\Software gateway\\PLCGateway\\PLCGateway\\GatewayWorker.cs",
+              "RelativeDocumentMoniker": "PLCGateway\\GatewayWorker.cs",
+              "ToolTip": "D:\\SSEC\\4. Automation\\SBM development\\Software gateway\\PLCGateway\\PLCGateway\\GatewayWorker.cs",
+              "RelativeToolTip": "PLCGateway\\GatewayWorker.cs",
+              "ViewState": "AgIAAGAAAAAAAAAAAAAqwHgAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2025-12-07T15:38:16.549Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 4,
+              "Title": "DatabaseService.cs",
+              "DocumentMoniker": "D:\\SSEC\\4. Automation\\SBM development\\Software gateway\\PLCGateway\\PLCGateway\\DatabaseService.cs",
+              "RelativeDocumentMoniker": "PLCGateway\\DatabaseService.cs",
+              "ToolTip": "D:\\SSEC\\4. Automation\\SBM development\\Software gateway\\PLCGateway\\PLCGateway\\DatabaseService.cs",
+              "RelativeToolTip": "PLCGateway\\DatabaseService.cs",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAEIAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2025-12-07T15:27:49.998Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 3,
+              "Title": "PlcService.cs",
+              "DocumentMoniker": "D:\\SSEC\\4. Automation\\SBM development\\Software gateway\\PLCGateway\\PLCGateway\\PlcService.cs",
+              "RelativeDocumentMoniker": "PLCGateway\\PlcService.cs",
+              "ToolTip": "D:\\SSEC\\4. Automation\\SBM development\\Software gateway\\PLCGateway\\PLCGateway\\PlcService.cs",
+              "RelativeToolTip": "PLCGateway\\PlcService.cs",
+              "ViewState": "AgIAAAkAAAAAAAAAAAAowCMAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2025-12-07T15:27:21.543Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 5,
+              "Title": "PlcAddress.cs",
+              "DocumentMoniker": "D:\\SSEC\\4. Automation\\SBM development\\Software gateway\\PLCGateway\\PLCGateway\\PlcAddress.cs",
+              "RelativeDocumentMoniker": "PLCGateway\\PlcAddress.cs",
+              "ToolTip": "D:\\SSEC\\4. Automation\\SBM development\\Software gateway\\PLCGateway\\PLCGateway\\PlcAddress.cs",
+              "RelativeToolTip": "PLCGateway\\PlcAddress.cs",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAYAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2025-12-07T15:26:29.699Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 0,
+              "Title": "appsettings.json",
+              "DocumentMoniker": "D:\\SSEC\\4. Automation\\SBM development\\Software gateway\\PLCGateway\\PLCGateway\\appsettings.json",
+              "RelativeDocumentMoniker": "PLCGateway\\appsettings.json",
+              "ToolTip": "D:\\SSEC\\4. Automation\\SBM development\\Software gateway\\PLCGateway\\PLCGateway\\appsettings.json",
+              "RelativeToolTip": "PLCGateway\\appsettings.json",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAgAAABtAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001642|",
+              "WhenOpened": "2025-12-07T13:41:04.282Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 2,
+              "Title": "Program.cs",
+              "DocumentMoniker": "D:\\SSEC\\4. Automation\\SBM development\\Software gateway\\PLCGateway\\PLCGateway\\Program.cs",
+              "RelativeDocumentMoniker": "PLCGateway\\Program.cs",
+              "ToolTip": "D:\\SSEC\\4. Automation\\SBM development\\Software gateway\\PLCGateway\\PLCGateway\\Program.cs",
+              "RelativeToolTip": "PLCGateway\\Program.cs",
+              "ViewState": "AgIAAAMAAAAAAAAAAAAAACoAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2025-11-29T13:16:36.182Z"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

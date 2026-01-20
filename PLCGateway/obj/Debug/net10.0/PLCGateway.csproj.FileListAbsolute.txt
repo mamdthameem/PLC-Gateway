@@ -1,0 +1,106 @@
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\PLCGateway.exe
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\PLCGateway.deps.json
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\PLCGateway.runtimeconfig.json
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\PLCGateway.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\PLCGateway.pdb
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\S7.Net.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\obj\Debug\net10.0\PLCGateway.csproj.AssemblyReference.cache
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\obj\Debug\net10.0\PLCGateway.GeneratedMSBuildEditorConfig.editorconfig
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\obj\Debug\net10.0\PLCGateway.AssemblyInfoInputs.cache
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\obj\Debug\net10.0\PLCGateway.AssemblyInfo.cs
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\obj\Debug\net10.0\PLCGateway.csproj.CoreCompileInputs.cache
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\obj\Debug\net10.0\PLCGateway.csproj.Up2Date
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\obj\Debug\net10.0\PLCGateway.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\obj\Debug\net10.0\refint\PLCGateway.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\obj\Debug\net10.0\PLCGateway.pdb
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\obj\Debug\net10.0\PLCGateway.genruntimeconfig.cache
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\obj\Debug\net10.0\ref\PLCGateway.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\appsettings.json
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Configuration.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Configuration.Abstractions.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Configuration.Binder.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Configuration.CommandLine.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Configuration.EnvironmentVariables.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Configuration.FileExtensions.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Configuration.Json.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Configuration.UserSecrets.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.DependencyInjection.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.DependencyInjection.Abstractions.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Diagnostics.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Diagnostics.Abstractions.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.FileProviders.Abstractions.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.FileProviders.Physical.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.FileSystemGlobbing.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Hosting.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Hosting.Abstractions.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Hosting.WindowsServices.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Logging.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Logging.Abstractions.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Logging.Configuration.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Logging.Console.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Logging.Debug.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Logging.EventLog.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Logging.EventSource.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Options.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Options.ConfigurationExtensions.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Primitives.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\Newtonsoft.Json.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\Npgsql.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\System.Diagnostics.EventLog.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\System.ServiceProcess.ServiceController.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\runtimes\win\lib\net10.0\System.Diagnostics.EventLog.Messages.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\runtimes\win\lib\net10.0\System.Diagnostics.EventLog.dll
+D:\SSEC\4. Automation\SBM development\Software gateway\PLCGateway\PLCGateway\bin\Debug\net10.0\runtimes\win\lib\net10.0\System.ServiceProcess.ServiceController.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\appsettings.json
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\PLCGateway.exe
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\PLCGateway.deps.json
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\PLCGateway.runtimeconfig.json
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\PLCGateway.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\PLCGateway.pdb
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Configuration.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Configuration.Abstractions.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Configuration.Binder.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Configuration.CommandLine.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Configuration.EnvironmentVariables.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Configuration.FileExtensions.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Configuration.Json.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Configuration.UserSecrets.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.DependencyInjection.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.DependencyInjection.Abstractions.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Diagnostics.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Diagnostics.Abstractions.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.FileProviders.Abstractions.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.FileProviders.Physical.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.FileSystemGlobbing.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Hosting.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Hosting.Abstractions.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Hosting.WindowsServices.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Logging.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Logging.Abstractions.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Logging.Configuration.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Logging.Console.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Logging.Debug.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Logging.EventLog.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Logging.EventSource.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Options.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Options.ConfigurationExtensions.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\Microsoft.Extensions.Primitives.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\Newtonsoft.Json.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\Npgsql.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\S7.Net.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\System.Diagnostics.EventLog.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\System.ServiceProcess.ServiceController.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\runtimes\win\lib\net10.0\System.Diagnostics.EventLog.Messages.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\runtimes\win\lib\net10.0\System.Diagnostics.EventLog.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\bin\Debug\net10.0\runtimes\win\lib\net10.0\System.ServiceProcess.ServiceController.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\obj\Debug\net10.0\PLCGateway.csproj.AssemblyReference.cache
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\obj\Debug\net10.0\PLCGateway.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\obj\Debug\net10.0\PLCGateway.AssemblyInfoInputs.cache
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\obj\Debug\net10.0\PLCGateway.AssemblyInfo.cs
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\obj\Debug\net10.0\PLCGateway.csproj.CoreCompileInputs.cache
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\obj\Debug\net10.0\PLCGateway.csproj.Up2Date
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\obj\Debug\net10.0\PLCGateway.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\obj\Debug\net10.0\refint\PLCGateway.dll
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\obj\Debug\net10.0\PLCGateway.pdb
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\obj\Debug\net10.0\PLCGateway.genruntimeconfig.cache
+C:\Users\mdtha\OneDrive\Documents\Industry Project\PLCGateway\PLCGateway\obj\Debug\net10.0\ref\PLCGateway.dll
