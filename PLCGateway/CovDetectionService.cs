@@ -26,7 +26,7 @@ public class CovDetectionService
     /// Check if value should be stored in Tier 2 (historical) based on COV, state change, or periodic heartbeat.
     /// Returns storage reason if should store, null otherwise.
     /// </summary>
-    public async Task<string?> ShouldStoreInHistoricalAsync(string address, string parameterName, object? currentValue, string dataType)
+    public async Task<string?> ShouldStoreInHistoricalAsync(string address, string parameterName, string currentValue, string dataType)
     {
         // Get last value from Tier 1
         var currentValueRecord = await _dbService.GetCurrentValueAsync(address);
@@ -37,7 +37,7 @@ public class CovDetectionService
             return "INITIAL";
         }
 
-        object? lastValue = currentValueRecord.Value;
+        string? lastValue = currentValueRecord.Value;
         DateTime? lastStoredHistorical = currentValueRecord.LastStoredHistorical;
         DateTime? lastHeartbeat = currentValueRecord.LastHeartbeat;
 
@@ -53,15 +53,15 @@ public class CovDetectionService
     /// <summary>
     /// Check if numeric value should be stored (COV with 2% deadband OR periodic heartbeat).
     /// </summary>
-    private async Task<string?> ShouldStoreNumericAsync(object? currentValue, object? lastValue, DateTime? lastStoredHistorical, DateTime? lastHeartbeat)
+    private async Task<string?> ShouldStoreNumericAsync(string currentValue, string? lastValue, DateTime? lastStoredHistorical, DateTime? lastHeartbeat)
     {
-        if (currentValue == null || lastValue == null) return "INITIAL";
+        if (string.IsNullOrEmpty(currentValue) || string.IsNullOrEmpty(lastValue)) return "INITIAL";
 
         try
         {
             // Try to convert to double for numeric comparison
-            double current = Convert.ToDouble(currentValue);
-            double last = Convert.ToDouble(lastValue);
+            double current = Convert.ToDouble(currentValue, System.Globalization.CultureInfo.InvariantCulture);
+            double last = Convert.ToDouble(lastValue, System.Globalization.CultureInfo.InvariantCulture);
 
             // Check for COV (Change of Value) - 2% deadband
             if (last != 0)
@@ -104,14 +104,15 @@ public class CovDetectionService
     /// <summary>
     /// Check if boolean value should be stored (only on state change).
     /// </summary>
-    private string? ShouldStoreBool(object? currentValue, object? lastValue)
+    private string? ShouldStoreBool(string currentValue, string? lastValue)
     {
-        if (currentValue == null || lastValue == null) return "INITIAL";
+        if (string.IsNullOrEmpty(currentValue) || string.IsNullOrEmpty(lastValue)) return "INITIAL";
 
         try
         {
-            bool current = Convert.ToBoolean(currentValue);
-            bool last = Convert.ToBoolean(lastValue);
+            // BOOL values are stored as "1" or "0" strings
+            bool current = currentValue == "1" || currentValue.ToLower() == "true";
+            bool last = lastValue == "1" || lastValue.ToLower() == "true";
 
             if (current != last)
             {
@@ -130,12 +131,12 @@ public class CovDetectionService
     /// <summary>
     /// Check if string value should be stored (only on value change).
     /// </summary>
-    private string? ShouldStoreString(object? currentValue, object? lastValue)
+    private string? ShouldStoreString(string currentValue, string? lastValue)
     {
-        if (currentValue == null || lastValue == null) return "INITIAL";
+        if (string.IsNullOrEmpty(currentValue) || string.IsNullOrEmpty(lastValue)) return "INITIAL";
 
-        string currentStr = currentValue.ToString() ?? "";
-        string lastStr = lastValue.ToString() ?? "";
+        string currentStr = currentValue;
+        string lastStr = lastValue;
 
         if (!currentStr.Equals(lastStr, StringComparison.Ordinal))
         {

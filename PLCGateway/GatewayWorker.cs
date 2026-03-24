@@ -4,6 +4,7 @@ using Microsoft.Extensions.Configuration;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Collections.Generic;
+using S7.Net;
 
 public class GatewayWorker : BackgroundService
 {
@@ -16,6 +17,10 @@ public class GatewayWorker : BackgroundService
     private int _scanMs = 1000;
     // Track last written values to avoid writing the same value repeatedly
     private Dictionary<string, object> _lastWrittenValues = new Dictionary<string, object>();
+    // Track addresses that consistently fail to avoid repeated error logging
+    private HashSet<string> _failedAddresses = new HashSet<string>();
+    private Dictionary<string, int> _failureCount = new Dictionary<string, int>();
+    private const int MAX_FAILURE_COUNT = 2; // Stop logging after 2 consecutive failures (reduced for faster suppression)
 
     public GatewayWorker(
         ILogger<GatewayWorker> logger,
@@ -94,27 +99,73 @@ public class GatewayWorker : BackgroundService
                         
                         try
                         {
+                            // Skip addresses that have consistently failed
+                            if (_failedAddresses.Contains(tag.Address))
+                            {
+                                continue; // Skip this address silently
+                            }
+
                             // Handle Read operations with two-tier storage
                             if (mode == "read" || mode == "readwrite")
                             {
-                                var val = _plcService.Read(tag.Address);
+                                object? rawVal = null;
+                                try
+                                {
+                                    rawVal = _plcService.Read(tag.Address);
+                                    
+                                    // Reset failure count on successful read
+                                    if (_failureCount.ContainsKey(tag.Address))
+                                    {
+                                        _failureCount.Remove(tag.Address);
+                                    }
+                                }
+                                catch (S7.Net.PlcException plcEx)
+                                {
+                                    // Handle S7.Net specific errors
+                                    int currentFailures = _failureCount.GetValueOrDefault(tag.Address, 0) + 1;
+                                    _failureCount[tag.Address] = currentFailures;
+
+                                    // Log only first few failures, then suppress
+                                    if (currentFailures <= MAX_FAILURE_COUNT)
+                                    {
+                                        if (currentFailures == MAX_FAILURE_COUNT)
+                                        {
+                                            _logger.LogWarning(
+                                                "Address {addr} ({name}) has failed {count} times. Suppressing further errors. " +
+                                                "This address may be out of range or invalid in the PLC.",
+                                                tag.Address, tag.Name, currentFailures);
+                                            _failedAddresses.Add(tag.Address);
+                                        }
+                                        else
+                                        {
+                                            _logger.LogWarning(
+                                                "Failed to read tag {name} ({addr}): {error}",
+                                                tag.Name, tag.Address, plcEx.Message);
+                                        }
+                                    }
+                                    continue; // Skip to next tag
+                                }
                                 
                                 // Get data type from tag config or default
                                 string dataType = tag.DataType ?? "UNKNOWN";
+                                
+                                // Convert raw PLC value to proper string representation
+                                string convertedValue = ValueConverter.ConvertToString(rawVal, dataType);
                                 
                                 // TIER 1: Always update current values table
                                 await _dbService.UpsertCurrentValueAsync(
                                     tag.Address, 
                                     tag.Name, 
-                                    val, 
+                                    convertedValue, 
                                     dataType
                                 );
 
                                 // TIER 2: Conditionally store in historical based on COV detection
+                                // Use converted value for comparison
                                 var storageReason = await _covService.ShouldStoreInHistoricalAsync(
                                     tag.Address, 
                                     tag.Name, 
-                                    val, 
+                                    convertedValue, 
                                     dataType
                                 );
 
@@ -127,7 +178,7 @@ public class GatewayWorker : BackgroundService
                                     await _dbService.InsertHistoricalDataAsync(
                                         tag.Address,
                                         tag.Name,
-                                        val,
+                                        convertedValue,
                                         dataType,
                                         storageReason,
                                         previousValue
@@ -146,12 +197,13 @@ public class GatewayWorker : BackgroundService
                                         "Stored {name} ({addr}) = {val} to Tier 2. Reason: {reason}", 
                                         tag.Name, 
                                         tag.Address, 
-                                        val, 
+                                        convertedValue, 
                                         storageReason
                                     );
                                 }
 
-                                _logger.LogInformation("Read {name} ({addr}) = {val}", tag.Name, tag.Address, val);
+                                _logger.LogInformation("Read {name} ({addr}) = {val} (raw: {raw})", 
+                                    tag.Name, tag.Address, convertedValue, rawVal);
                             }
                             
                             // Handle Write operations
@@ -197,7 +249,27 @@ public class GatewayWorker : BackgroundService
                         }
                         catch (System.Exception ex)
                         {
-                            _logger.LogWarning(ex, "Failed to read/write tag {addr}", tag.Address);
+                            // Only log if not already in failed addresses list
+                            if (!_failedAddresses.Contains(tag.Address))
+                            {
+                                int currentFailures = _failureCount.GetValueOrDefault(tag.Address, 0) + 1;
+                                _failureCount[tag.Address] = currentFailures;
+
+                                if (currentFailures <= MAX_FAILURE_COUNT)
+                                {
+                                    if (currentFailures == MAX_FAILURE_COUNT)
+                                    {
+                                        _logger.LogWarning(
+                                            "Address {addr} ({name}) has failed {count} times. Suppressing further errors.",
+                                            tag.Address, tag.Name, currentFailures);
+                                        _failedAddresses.Add(tag.Address);
+                                    }
+                                    else
+                                    {
+                                        _logger.LogWarning(ex, "Failed to read/write tag {name} ({addr})", tag.Name, tag.Address);
+                                    }
+                                }
+                            }
                         }
                     }
                 }

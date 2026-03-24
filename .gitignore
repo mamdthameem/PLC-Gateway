@@ -1,0 +1,16 @@
+## Build results
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+## Visual Studio / VS Code
+.vs/
+*.user
+*.userosscache
+*.suo
+*.userprefs
+
+## NuGet
+*.nupkg
+**/packages/

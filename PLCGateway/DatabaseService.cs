@@ -24,10 +24,10 @@ public class DatabaseService
     /// Upsert (insert or update) current value in Tier 1 table.
     /// Always updates the latest value for real-time lookups.
     /// </summary>
-    public async Task UpsertCurrentValueAsync(string address, string parameterName, object? value, string dataType)
+    public async Task UpsertCurrentValueAsync(string address, string parameterName, string value, string dataType)
     {
         if (string.IsNullOrEmpty(address)) throw new ArgumentNullException(nameof(address));
-        string val = value?.ToString() ?? "";
+        string val = value ?? "";
 
         int attempt = 0;
         while (true)
@@ -220,10 +220,10 @@ public class DatabaseService
     /// <summary>
     /// Insert historical data into Tier 2 table with storage reason.
     /// </summary>
-    public async Task InsertHistoricalDataAsync(string address, string parameterName, object? value, string dataType, string storageReason, string? previousValue = null)
+    public async Task InsertHistoricalDataAsync(string address, string parameterName, string value, string dataType, string storageReason, string? previousValue = null)
     {
         if (string.IsNullOrEmpty(address)) throw new ArgumentNullException(nameof(address));
-        string val = value?.ToString() ?? "";
+        string val = value ?? "";
 
         int attempt = 0;
         while (true)
@@ -401,7 +401,9 @@ public class DatabaseService
         }
 
         // For reads, update Tier 1 (this is a simplified version)
-        await UpsertCurrentValueAsync(tagName, tagName, value, "UNKNOWN");
+        // Convert value to string using default conversion
+        string valueStr = value?.ToString() ?? "";
+        await UpsertCurrentValueAsync(tagName, tagName, valueStr, "UNKNOWN");
     }
 
     #endregion
