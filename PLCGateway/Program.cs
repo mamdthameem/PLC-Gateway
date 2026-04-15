@@ -42,7 +42,8 @@ var host = Host.CreateDefaultBuilder(args)
         {
             var dbService = sp.GetRequiredService<DatabaseService>();
             var logger = sp.GetRequiredService<ILogger<CalculationService>>();
-            return new CalculationService(dbService, logger);
+            var cfg = sp.GetRequiredService<IConfiguration>();
+            return new CalculationService(dbService, logger, cfg);
         });
 
         // Register background services

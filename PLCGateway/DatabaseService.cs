@@ -333,6 +333,181 @@ public class DatabaseService
 
     #endregion
 
+    #region Query Helpers for Calculations
+
+    /// <summary>
+    /// Get all STATE_CHANGE / COV records for a tag within a time window, ordered by timestamp.
+    /// Used to reconstruct blast durations, refill events, cycle counts.
+    /// </summary>
+    public async Task<List<PlcHistoricalData>> GetStateChangesAsync(string parameterName, DateTime start, DateTime end)
+    {
+        var results = new List<PlcHistoricalData>();
+        int attempt = 0;
+        while (true)
+        {
+            attempt++;
+            try
+            {
+                await using var conn = new NpgsqlConnection(_connectionString);
+                await conn.OpenAsync();
+                const string sql = @"
+                    SELECT id, address, parameter_name, value, data_type, storage_reason, timestamp, previous_value
+                    FROM plc_historical_data
+                    WHERE parameter_name = @name
+                      AND timestamp >= @start AND timestamp <= @end
+                    ORDER BY timestamp ASC";
+                await using var cmd = new NpgsqlCommand(sql, conn);
+                cmd.Parameters.AddWithValue("name", parameterName);
+                cmd.Parameters.AddWithValue("start", start);
+                cmd.Parameters.AddWithValue("end", end);
+                await using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    results.Add(new PlcHistoricalData
+                    {
+                        Id = reader.GetInt32(0),
+                        Address = reader.GetString(1),
+                        ParameterName = reader.GetString(2),
+                        Value = reader.IsDBNull(3) ? null : reader.GetString(3),
+                        DataType = reader.GetString(4),
+                        StorageReason = reader.GetString(5),
+                        Timestamp = reader.GetDateTime(6),
+                        PreviousValue = reader.IsDBNull(7) ? null : reader.GetString(7)
+                    });
+                }
+                return results;
+            }
+            catch (Exception ex)
+            {
+                if (attempt >= _maxRetries) { _logger?.LogError(ex, "GetStateChangesAsync failed after {n} attempts.", attempt); return results; }
+                await Task.Delay(_baseDelayMs * (int)Math.Pow(2, attempt - 1) + new Random().Next(0, 200));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Get the most recent historical record for a tag (used for Last Refill Time, etc.)
+    /// </summary>
+    public async Task<PlcHistoricalData?> GetLatestHistoricalAsync(string parameterName)
+    {
+        int attempt = 0;
+        while (true)
+        {
+            attempt++;
+            try
+            {
+                await using var conn = new NpgsqlConnection(_connectionString);
+                await conn.OpenAsync();
+                const string sql = @"
+                    SELECT id, address, parameter_name, value, data_type, storage_reason, timestamp, previous_value
+                    FROM plc_historical_data
+                    WHERE parameter_name = @name
+                    ORDER BY timestamp DESC LIMIT 1";
+                await using var cmd = new NpgsqlCommand(sql, conn);
+                cmd.Parameters.AddWithValue("name", parameterName);
+                await using var reader = await cmd.ExecuteReaderAsync();
+                if (await reader.ReadAsync())
+                    return new PlcHistoricalData
+                    {
+                        Id = reader.GetInt32(0), Address = reader.GetString(1),
+                        ParameterName = reader.GetString(2),
+                        Value = reader.IsDBNull(3) ? null : reader.GetString(3),
+                        DataType = reader.GetString(4), StorageReason = reader.GetString(5),
+                        Timestamp = reader.GetDateTime(6),
+                        PreviousValue = reader.IsDBNull(7) ? null : reader.GetString(7)
+                    };
+                return null;
+            }
+            catch (Exception ex)
+            {
+                if (attempt >= _maxRetries) { _logger?.LogError(ex, "GetLatestHistoricalAsync failed."); return null; }
+                await Task.Delay(_baseDelayMs * (int)Math.Pow(2, attempt - 1) + new Random().Next(0, 200));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Get the earliest historical record for Machine status != 0 after a given time.
+    /// Used to determine shift start.
+    /// </summary>
+    public async Task<DateTime?> GetShiftStartAsync(DateTime since)
+    {
+        int attempt = 0;
+        while (true)
+        {
+            attempt++;
+            try
+            {
+                await using var conn = new NpgsqlConnection(_connectionString);
+                await conn.OpenAsync();
+                const string sql = @"
+                    SELECT timestamp FROM plc_historical_data
+                    WHERE parameter_name = 'Machine status'
+                      AND value != '0'
+                      AND timestamp >= @since
+                    ORDER BY timestamp ASC LIMIT 1";
+                await using var cmd = new NpgsqlCommand(sql, conn);
+                cmd.Parameters.AddWithValue("since", since);
+                var result = await cmd.ExecuteScalarAsync();
+                return result == DBNull.Value || result == null ? null : (DateTime?)Convert.ToDateTime(result);
+            }
+            catch (Exception ex)
+            {
+                if (attempt >= _maxRetries) { _logger?.LogError(ex, "GetShiftStartAsync failed."); return null; }
+                await Task.Delay(_baseDelayMs * (int)Math.Pow(2, attempt - 1) + new Random().Next(0, 200));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Upsert a calculated metric — updates existing row if same metric+period+period_value exists.
+    /// Uses two separate SQL statements because PostgreSQL partial indexes require
+    /// the WHERE clause to be specified explicitly in ON CONFLICT.
+    /// </summary>
+    public async Task UpsertCalculatedMetricAsync(string metricName, decimal? metricValue, string periodType, DateTime? periodValue = null, string? metadataJson = null)
+    {
+        if (string.IsNullOrEmpty(metricName)) return;
+        int attempt = 0;
+
+        // Two different SQL depending on whether period_value is null
+        // (realtime/cumulative have NULL period_value, all others have a timestamp)
+        string sql = periodValue.HasValue
+            ? @"INSERT INTO calculated_metrics (metric_name, metric_value, period_type, period_value, calculation_timestamp, metadata)
+                VALUES (@metric_name, @metric_value, @period_type, @period_value, NOW(), @metadata::jsonb)
+                ON CONFLICT (metric_name, period_type, period_value) WHERE period_value IS NOT NULL
+                DO UPDATE SET metric_value = EXCLUDED.metric_value, calculation_timestamp = NOW(), metadata = EXCLUDED.metadata"
+            : @"INSERT INTO calculated_metrics (metric_name, metric_value, period_type, period_value, calculation_timestamp, metadata)
+                VALUES (@metric_name, @metric_value, @period_type, NULL, NOW(), @metadata::jsonb)
+                ON CONFLICT (metric_name, period_type) WHERE period_value IS NULL
+                DO UPDATE SET metric_value = EXCLUDED.metric_value, calculation_timestamp = NOW(), metadata = EXCLUDED.metadata";
+
+        while (true)
+        {
+            attempt++;
+            try
+            {
+                await using var conn = new NpgsqlConnection(_connectionString);
+                await conn.OpenAsync();
+                await using var cmd = new NpgsqlCommand(sql, conn);
+                cmd.Parameters.AddWithValue("metric_name", metricName);
+                cmd.Parameters.AddWithValue("metric_value", metricValue ?? (object)DBNull.Value);
+                cmd.Parameters.AddWithValue("period_type", periodType);
+                if (periodValue.HasValue)
+                    cmd.Parameters.AddWithValue("period_value", periodValue.Value);
+                cmd.Parameters.AddWithValue("metadata", metadataJson ?? (object)DBNull.Value);
+                await cmd.ExecuteNonQueryAsync();
+                return;
+            }
+            catch (Exception ex)
+            {
+                if (attempt >= _maxRetries) { _logger?.LogError(ex, "UpsertCalculatedMetricAsync failed for {m}.", metricName); return; }
+                await Task.Delay(_baseDelayMs * (int)Math.Pow(2, attempt - 1) + new Random().Next(0, 200));
+            }
+        }
+    }
+
+    #endregion
+
     #region Calculated Metrics
 
     /// <summary>

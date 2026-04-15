@@ -118,6 +118,25 @@ COMMENT ON COLUMN plc_aggregated_hourly.data_age_days IS 'Age of data when aggre
 -- Run these to verify tables were created successfully
 -- =====================================================
 
+-- =====================================================
+-- UNIQUE INDEXES for calculated_metrics upsert
+--
+-- WHY two indexes instead of one UNIQUE constraint:
+-- PostgreSQL treats NULL != NULL in unique constraints,
+-- so (metric_name, period_type, NULL) would never conflict.
+-- Two partial indexes fix this:
+--   1. Rows WITH a period_value  (hour/shift/day/week/month/year)
+--   2. Rows WITHOUT period_value (realtime/cumulative)
+-- =====================================================
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_calculated_metrics_with_period
+    ON calculated_metrics (metric_name, period_type, period_value)
+    WHERE period_value IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_calculated_metrics_no_period
+    ON calculated_metrics (metric_name, period_type)
+    WHERE period_value IS NULL;
+
 -- Check all tables exist
 SELECT table_name 
 FROM information_schema.tables 

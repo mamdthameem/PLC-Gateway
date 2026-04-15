@@ -5,95 +5,72 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Configuration;
 
+/// <summary>
+/// Runs every minute.
+/// - Triggers ComputeAndStoreAllMetrics (hour/day/week/month/year + realtime + cumulative).
+/// - Detects shift boundaries (machine status 0 → non-zero = shift start,
+///   non-zero → 0 = shift end) and triggers shift metric computation.
+/// </summary>
 public class AggregationService : BackgroundService
 {
     private readonly ILogger<AggregationService> _logger;
-    private readonly IConfiguration _configuration;
     private readonly CalculationService _calculationService;
+    private readonly DatabaseService _dbService;
+
+    // Shift state tracking
+    private bool _machineWasOn = false;
+    private DateTime _shiftStartTime = DateTime.MinValue;
 
     public AggregationService(
         ILogger<AggregationService> logger,
-        IConfiguration configuration,
-        CalculationService calculationService)
+        CalculationService calculationService,
+        DatabaseService dbService)
     {
         _logger = logger;
-        _configuration = configuration;
         _calculationService = calculationService;
+        _dbService = dbService;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("AggregationService starting.");
 
-        // Get aggregation schedule from config
-        var hourlyEnabled = _configuration.GetValue<bool>("Aggregation:AggregationSchedule:Hourly", true);
-        var shiftEnabled = _configuration.GetValue<bool>("Aggregation:AggregationSchedule:Shift", true);
-        var dailyEnabled = _configuration.GetValue<bool>("Aggregation:AggregationSchedule:Daily", true);
-
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                var now = DateTime.Now;
+                // ── Shift boundary detection ──────────────────────────────
+                var machineStatusRecord = await _dbService.GetCurrentValueAsync("DB60.DBB0");
+                bool machineIsOn = machineStatusRecord != null
+                    && machineStatusRecord.Value != null
+                    && machineStatusRecord.Value != "0";
 
-                // Hourly aggregation (run at top of each hour)
-                if (hourlyEnabled && now.Minute == 0 && now.Second < 10)
+                if (!_machineWasOn && machineIsOn)
                 {
-                    var hourStart = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0);
-                    var hourEnd = hourStart.AddHours(1);
-                    await _calculationService.CalculateAggregatedMetricsAsync("hour", hourStart, hourEnd);
+                    // Machine just turned ON → shift start
+                    _shiftStartTime = DateTime.Now;
+                    _logger.LogInformation("Shift started at {time}", _shiftStartTime);
+                }
+                else if (_machineWasOn && !machineIsOn && _shiftStartTime != DateTime.MinValue)
+                {
+                    // Machine just turned OFF → shift end → compute shift metrics
+                    var shiftEnd = DateTime.Now;
+                    _logger.LogInformation("Shift ended at {time}. Computing shift metrics.", shiftEnd);
+                    await _calculationService.ComputeShiftMetricsAsync(_shiftStartTime, shiftEnd);
+                    _shiftStartTime = DateTime.MinValue;
                 }
 
-                // Shift aggregation (run at shift change - every 8 hours)
-                var shiftDurationHours = _configuration.GetValue<int>("Aggregation:ShiftDurationHours", 8);
-                if (shiftEnabled && now.Hour % shiftDurationHours == 0 && now.Minute == 0 && now.Second < 10)
-                {
-                    var shiftStart = new DateTime(now.Year, now.Month, now.Day, (now.Hour / shiftDurationHours) * shiftDurationHours, 0, 0);
-                    var shiftEnd = shiftStart.AddHours(shiftDurationHours);
-                    await _calculationService.CalculateAggregatedMetricsAsync("shift", shiftStart, shiftEnd);
-                }
+                _machineWasOn = machineIsOn;
 
-                // Daily aggregation (run at midnight)
-                if (dailyEnabled && now.Hour == 0 && now.Minute == 0 && now.Second < 10)
-                {
-                    var dayStart = new DateTime(now.Year, now.Month, now.Day, 0, 0, 0);
-                    var dayEnd = dayStart.AddDays(1);
-                    await _calculationService.CalculateAggregatedMetricsAsync("day", dayStart, dayEnd);
-                }
-
-                // Weekly aggregation (run on Monday at midnight)
-                if (now.DayOfWeek == DayOfWeek.Monday && now.Hour == 0 && now.Minute == 0 && now.Second < 10)
-                {
-                    var weekStart = now.AddDays(-(int)now.DayOfWeek);
-                    weekStart = new DateTime(weekStart.Year, weekStart.Month, weekStart.Day, 0, 0, 0);
-                    var weekEnd = weekStart.AddDays(7);
-                    await _calculationService.CalculateAggregatedMetricsAsync("week", weekStart, weekEnd);
-                }
-
-                // Monthly aggregation (run on 1st of month at midnight)
-                if (now.Day == 1 && now.Hour == 0 && now.Minute == 0 && now.Second < 10)
-                {
-                    var monthStart = new DateTime(now.Year, now.Month, 1, 0, 0, 0);
-                    var monthEnd = monthStart.AddMonths(1);
-                    await _calculationService.CalculateAggregatedMetricsAsync("month", monthStart, monthEnd);
-                }
-
-                // Yearly aggregation (run on Jan 1st at midnight)
-                if (now.Month == 1 && now.Day == 1 && now.Hour == 0 && now.Minute == 0 && now.Second < 10)
-                {
-                    var yearStart = new DateTime(now.Year, 1, 1, 0, 0, 0);
-                    var yearEnd = yearStart.AddYears(1);
-                    await _calculationService.CalculateAggregatedMetricsAsync("year", yearStart, yearEnd);
-                }
-
-                // Check every minute
-                await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
+                // ── Compute all period metrics (upserts all filters) ──────
+                await _calculationService.ComputeAndStoreAllMetricsAsync();
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error in aggregation service loop");
-                await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
+                _logger.LogError(ex, "Error in AggregationService loop");
             }
+
+            await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
         }
 
         _logger.LogInformation("AggregationService stopping.");
