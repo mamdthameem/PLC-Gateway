@@ -15,12 +15,17 @@ public class GatewayWorker : BackgroundService
     private readonly CovDetectionService _covService;
     private List<PlcAddress> _tags = new List<PlcAddress>();
     private int _scanMs = 1000;
-    // Track last written values to avoid writing the same value repeatedly
     private Dictionary<string, object> _lastWrittenValues = new Dictionary<string, object>();
-    // Track addresses that consistently fail to avoid repeated error logging
     private HashSet<string> _failedAddresses = new HashSet<string>();
     private Dictionary<string, int> _failureCount = new Dictionary<string, int>();
-    private const int MAX_FAILURE_COUNT = 2; // Stop logging after 2 consecutive failures (reduced for faster suppression)
+    private const int MAX_FAILURE_COUNT = 2;
+
+    // Blast state — tracked from the Blast ON/OFF tag each scan; used to decide whether
+    // to store Current_imp_N readings every second (only stored when blast is active).
+    private bool _blastIsOn = false;
+    private const string BLAST_TAG_NAME = "Blast ON/OFF";
+    private static readonly System.Collections.Generic.HashSet<string> CurrentImpTags =
+        new(System.Linq.Enumerable.Range(1, 10).Select(i => $"Current_imp_{i}"));
 
     public GatewayWorker(
         ILogger<GatewayWorker> logger,
@@ -111,7 +116,11 @@ public class GatewayWorker : BackgroundService
                                 object? rawVal = null;
                                 try
                                 {
-                                    rawVal = _plcService.Read(tag.Address);
+                                    // S7.Net cannot read STRING via normal Read() — must use byte-level read
+                                    if (string.Equals(tag.DataType, "STRING", StringComparison.OrdinalIgnoreCase))
+                                        rawVal = _plcService.ReadString(tag.Address);
+                                    else
+                                        rawVal = _plcService.Read(tag.Address);
                                     
                                     // Reset failure count on successful read
                                     if (_failureCount.ContainsKey(tag.Address))
@@ -152,29 +161,36 @@ public class GatewayWorker : BackgroundService
                                 // Convert raw PLC value to proper string representation
                                 string convertedValue = ValueConverter.ConvertToString(rawVal, dataType);
                                 
+                                // Read old Tier 1 record BEFORE upsert so COV comparison sees the previous value
+                                var oldRecord = await _dbService.GetCurrentValueAsync(tag.Address);
+                                string? previousValue = oldRecord?.Value;
+
+                                // Track blast state from the Blast ON/OFF tag
+                                if (tag.Name == BLAST_TAG_NAME)
+                                    _blastIsOn = convertedValue == "1" || convertedValue.ToLower() == "true";
+
                                 // TIER 1: Always update current values table
                                 await _dbService.UpsertCurrentValueAsync(
-                                    tag.Address, 
-                                    tag.Name, 
-                                    convertedValue, 
+                                    tag.Address,
+                                    tag.Name,
+                                    convertedValue,
                                     dataType
                                 );
 
-                                // TIER 2: Conditionally store in historical based on COV detection
-                                // Use converted value for comparison
-                                var storageReason = await _covService.ShouldStoreInHistoricalAsync(
-                                    tag.Address, 
-                                    tag.Name, 
-                                    convertedValue, 
-                                    dataType
+                                // TIER 2: COV-based storage for all tags.
+                                // Current_imp_N are additionally stored every scan while blast is ON
+                                // so energy calculations have dense amp readings during each cycle.
+                                var storageReason = _covService.ShouldStoreInHistorical(
+                                    convertedValue,
+                                    dataType,
+                                    previousValue
                                 );
+
+                                if (storageReason == null && CurrentImpTags.Contains(tag.Name) && _blastIsOn)
+                                    storageReason = "BLAST_ON";
 
                                 if (storageReason != null)
                                 {
-                                    // Get previous value for historical record
-                                    var previousValue = await _covService.GetPreviousValueAsync(tag.Address);
-
-                                    // Store in Tier 2 (historical)
                                     await _dbService.InsertHistoricalDataAsync(
                                         tag.Address,
                                         tag.Name,
@@ -184,21 +200,11 @@ public class GatewayWorker : BackgroundService
                                         previousValue
                                     );
 
-                                    // Update last stored historical timestamp in Tier 1
                                     await _dbService.UpdateLastStoredHistoricalAsync(tag.Address);
 
-                                    // If periodic heartbeat, also update heartbeat timestamp
-                                    if (storageReason == "PERIODIC")
-                                    {
-                                        await _dbService.UpdateLastHeartbeatAsync(tag.Address);
-                                    }
-
                                     _logger.LogDebug(
-                                        "Stored {name} ({addr}) = {val} to Tier 2. Reason: {reason}", 
-                                        tag.Name, 
-                                        tag.Address, 
-                                        convertedValue, 
-                                        storageReason
+                                        "Stored {name} ({addr}) = {val} to Tier 2. Reason: {reason}",
+                                        tag.Name, tag.Address, convertedValue, storageReason
                                     );
                                 }
 

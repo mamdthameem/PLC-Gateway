@@ -5,7 +5,10 @@
       "Bash(dotnet run:*)",
       "Bash(taskkill:*)",
       "Bash(cmd:*)",
-      "Bash(powershell:*)"
+      "Bash(powershell:*)",
+      "Bash(Start-Sleep -Seconds 15)",
+      "Bash(Get-Content \"C:\\\\Users\\\\mdtha\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--PLCGateway\\\\c86acaea-6dfb-4489-952d-b18d8ca77b4e\\\\tasks\\\\ba93b5st2.output\")",
+      "Bash(Select-Object -First 100)"
     ]
   }
 }

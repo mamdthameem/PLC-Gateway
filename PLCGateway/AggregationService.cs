@@ -3,13 +3,11 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Configuration;
 
 /// <summary>
 /// Runs every minute.
-/// - Triggers ComputeAndStoreAllMetrics (hour/day/week/month/year + realtime + cumulative).
-/// - Detects shift boundaries (machine status 0 → non-zero = shift start,
-///   non-zero → 0 = shift end) and triggers shift metric computation.
+/// Updates Section 1 (plc_lifetime_parameters) by calling ComputeLifetimeParametersAsync.
+/// Also tracks shift boundaries for logging purposes.
 /// </summary>
 public class AggregationService : BackgroundService
 {
@@ -17,7 +15,6 @@ public class AggregationService : BackgroundService
     private readonly CalculationService _calculationService;
     private readonly DatabaseService _dbService;
 
-    // Shift state tracking
     private bool _machineWasOn = false;
     private DateTime _shiftStartTime = DateTime.MinValue;
 
@@ -26,9 +23,9 @@ public class AggregationService : BackgroundService
         CalculationService calculationService,
         DatabaseService dbService)
     {
-        _logger = logger;
+        _logger             = logger;
         _calculationService = calculationService;
-        _dbService = dbService;
+        _dbService          = dbService;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -39,31 +36,25 @@ public class AggregationService : BackgroundService
         {
             try
             {
-                // ── Shift boundary detection ──────────────────────────────
+                // Detect shift boundaries for logging
                 var machineStatusRecord = await _dbService.GetCurrentValueAsync("DB60.DBB0");
-                bool machineIsOn = machineStatusRecord != null
-                    && machineStatusRecord.Value != null
-                    && machineStatusRecord.Value != "0";
+                bool machineIsOn = machineStatusRecord?.Value != null && machineStatusRecord.Value != "0";
 
                 if (!_machineWasOn && machineIsOn)
                 {
-                    // Machine just turned ON → shift start
                     _shiftStartTime = DateTime.Now;
-                    _logger.LogInformation("Shift started at {time}", _shiftStartTime);
+                    _logger.LogInformation("Machine ON — shift started at {time}", _shiftStartTime);
                 }
                 else if (_machineWasOn && !machineIsOn && _shiftStartTime != DateTime.MinValue)
                 {
-                    // Machine just turned OFF → shift end → compute shift metrics
-                    var shiftEnd = DateTime.Now;
-                    _logger.LogInformation("Shift ended at {time}. Computing shift metrics.", shiftEnd);
-                    await _calculationService.ComputeShiftMetricsAsync(_shiftStartTime, shiftEnd);
+                    _logger.LogInformation("Machine OFF — shift ended at {time} (started {start})", DateTime.Now, _shiftStartTime);
                     _shiftStartTime = DateTime.MinValue;
                 }
 
                 _machineWasOn = machineIsOn;
 
-                // ── Compute all period metrics (upserts all filters) ──────
-                await _calculationService.ComputeAndStoreAllMetricsAsync();
+                // Update Section 1 lifetime parameters
+                await _calculationService.ComputeLifetimeParametersAsync();
             }
             catch (Exception ex)
             {
