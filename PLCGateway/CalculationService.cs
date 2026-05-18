@@ -83,13 +83,17 @@ public class CalculationService
             foreach (var (ts, count) in breakdown)
                 await _db.InsertLifetimeShotsBreakdownAsync(ts, count);
 
-            // #8 avg_shot_refill_time_sec = total machine-on seconds ÷ COV refill event count
-            double machineOnSec = await ComputeMachineOnTimeSecondsAsync(epoch, now);
-            int refillCount = (await _db.GetStateChangesAsync(TAG_SHOT_REFILL, epoch, now))
-                .Count(r => r.StorageReason == "COV" || r.StorageReason == "VALUE_CHANGE" || r.StorageReason == "STATE_CHANGE");
-            decimal avgRefillTimeSec = refillCount > 0
-                ? (decimal)Math.Round(machineOnSec / refillCount, 1)
-                : 0;
+            // #8 avg_shot_refill_time_sec = elapsed time since first refill ÷ total refill count
+            var refillEvents = (await _db.GetStateChangesAsync(TAG_SHOT_REFILL, epoch, now))
+                .Where(r => r.StorageReason == "COV" || r.StorageReason == "VALUE_CHANGE" || r.StorageReason == "STATE_CHANGE")
+                .OrderBy(r => r.Timestamp)
+                .ToList();
+            decimal avgRefillTimeSec = 0;
+            if (refillEvents.Count > 0)
+            {
+                double elapsedSec = (now - refillEvents[0].Timestamp).TotalSeconds;
+                avgRefillTimeSec = (decimal)Math.Round(elapsedSec / refillEvents.Count, 1);
+            }
             await _db.UpsertLifetimeParameterAsync("avg_shot_refill_time_sec", avgRefillTimeSec);
 
             _logger.LogDebug("Lifetime parameters updated at {time}", now);
@@ -133,9 +137,8 @@ public class CalculationService
             foreach (var kv in windowParams)
                 await _db.InsertFilteredParameterAsync(requestId, kv.Key, kv.Value);
 
-            // 3. #3 production: last Tonnage value − first Tonnage value in window
+            // 3. Production used only as energy_per_casting denominator — not stored as a display parameter
             double productionKg = await ComputeProductionKgWindowAsync(windowStart, windowEnd);
-            await _db.InsertFilteredParameterAsync(requestId, "production_qty_kg", (decimal)Math.Round(productionKg, 2));
 
             // 4. #4 energy: per-cycle avg amps × duration hours, cycles in scope only
             double totalKwh = await ComputeEnergyKwhFromCyclesAsync(cycles);
@@ -145,13 +148,7 @@ public class CalculationService
             double energyPerCasting = productionKg > 0 ? totalKwh / productionKg : 0;
             await _db.InsertFilteredParameterAsync(requestId, "energy_per_casting_kwh_kg", (decimal)Math.Round(energyPerCasting, 4));
 
-            // 6. #11 last_refill_epoch_sec
-            var refillRecords = await _db.GetStateChangesAsync(TAG_SHOT_REFILL, windowStart, windowEnd);
-            if (refillRecords.Count > 0)
-            {
-                long epochSec = ((DateTimeOffset)refillRecords.Last().Timestamp).ToUnixTimeSeconds();
-                await _db.InsertFilteredParameterAsync(requestId, "last_refill_epoch_sec", (decimal)epochSec);
-            }
+            // last_refill_epoch_sec is a live/absolute value — not relevant to a filtered window
 
             // 7. #7 shots breakdown table (effective_shots_usage and avg_shot_refill_time_sec not in Section 2)
             var breakdown = await ComputeShotsBreakdownAsync(windowStart, windowEnd);
@@ -244,14 +241,16 @@ public class CalculationService
     // FORMULA IMPLEMENTATIONS
     // ════════════════════════════════════════════════════════════════════════
 
-    // #3 Production — Section 2: last Tonnage value minus first Tonnage value in window
+    // #3 Production — Section 2: Tonnage at window end minus Tonnage at window start.
+    // Uses the last known reading before each boundary so a window with only one COV
+    // record (or none) still produces a correct delta instead of returning 0.
     private async Task<double> ComputeProductionKgWindowAsync(DateTime start, DateTime end)
     {
-        var records = await _db.GetStateChangesAsync(TAG_TONNAGE, start, end);
-        if (records.Count < 2) return 0;
-        double first = ParseDouble(records.First().Value);
-        double last  = ParseDouble(records.Last().Value);
-        return Math.Max(last - first, 0);
+        var baselineRec = await _db.GetLatestHistoricalBeforeAsync(TAG_TONNAGE, start);
+        var finalRec    = await _db.GetLatestHistoricalBeforeAsync(TAG_TONNAGE, end);
+        double baseline = ParseDouble(baselineRec?.Value);
+        double final    = ParseDouble(finalRec?.Value);
+        return Math.Max(final - baseline, 0);
     }
 
     // #4 Energy — per-cycle: arithmetic mean of COV amp readings per impeller × duration hours
