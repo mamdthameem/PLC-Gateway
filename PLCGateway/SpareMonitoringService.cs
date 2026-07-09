@@ -22,6 +22,7 @@ public class SpareMonitoringService : BackgroundService
 {
     private readonly ILogger<SpareMonitoringService> _logger;
     private readonly DatabaseService _db;
+    private readonly PlcConnectionState _connState;
 
     private readonly string[] _spareNames;
     private readonly double[] _spareThresholds;
@@ -37,10 +38,12 @@ public class SpareMonitoringService : BackgroundService
     public SpareMonitoringService(
         ILogger<SpareMonitoringService> logger,
         DatabaseService db,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        PlcConnectionState connState)
     {
         _logger          = logger;
         _db              = db;
+        _connState       = connState;
         _spareNames      = configuration.GetSection("MaintenanceThresholds:SpareNames").Get<string[]>()
                            ?? Array.Empty<string>();
         _spareThresholds = configuration.GetSection("MaintenanceThresholds:SpareLifeBlastHours").Get<double[]>()
@@ -54,6 +57,14 @@ public class SpareMonitoringService : BackgroundService
 
         while (!stoppingToken.IsCancellationRequested)
         {
+            // Tier 1 spare values are stale while the PLC is disconnected — don't
+            // overwrite plc_spare_status with them.
+            if (!_connState.IsConnected)
+            {
+                await Task.Delay(PollInterval, stoppingToken);
+                continue;
+            }
+
             try
             {
                 for (int imp = 1; imp <= ImpellerCount; imp++)

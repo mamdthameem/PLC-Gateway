@@ -9,4 +9,5 @@ public class PlcCurrentValue
     public DateTime LastUpdated { get; set; }
     public DateTime? LastStoredHistorical { get; set; }
     public DateTime? LastHeartbeat { get; set; }
+    public bool IsStale { get; set; }
 }

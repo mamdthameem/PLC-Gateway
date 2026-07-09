@@ -16,15 +16,23 @@ public class CovDetectionService
     }
 
     // Returns a storage reason if the value should be written to Tier 2, null otherwise.
-    // previousValue must be read from Tier 1 BEFORE the Tier 1 upsert.
+    // previousValue is the last value known from the in-memory scan cache.
     // "INITIAL" → first ever record for this tag (previousValue is null/empty)
-    // "COV"     → numeric change ≥ deadband %
+    // "COV"     → numeric change beyond the tag's deadband
     // "STATE_CHANGE" → BOOL flipped
     // "VALUE_CHANGE" → STRING changed
+    //
+    // covMode selects the numeric deadband style:
+    //   "relative" (default) → change ≥ CovDeadbandPercent % of the last value (for analogs)
+    //   "absolute"           → |change| ≥ covDeadband in engineering units (for accumulators
+    //                          such as tonnage / run-hours, whose relative deadband would grow
+    //                          without bound as the running total climbs).
     public string? ShouldStoreInHistorical(
         string currentValue,
         string dataType,
-        string? previousValue)
+        string? previousValue,
+        string covMode = "relative",
+        double? covDeadband = null)
     {
         if (string.IsNullOrEmpty(previousValue))
             return "INITIAL";
@@ -33,11 +41,11 @@ public class CovDetectionService
         {
             "BOOL" or "BOOLEAN"             => ShouldStoreBool(currentValue, previousValue),
             "STRING" or "CHAR" or "VARCHAR" => ShouldStoreString(currentValue, previousValue),
-            _                               => ShouldStoreNumeric(currentValue, previousValue)
+            _                               => ShouldStoreNumeric(currentValue, previousValue, covMode, covDeadband)
         };
     }
 
-    private string? ShouldStoreNumeric(string currentValue, string? lastValue)
+    private string? ShouldStoreNumeric(string currentValue, string? lastValue, string covMode, double? covDeadband)
     {
         if (string.IsNullOrEmpty(currentValue) || string.IsNullOrEmpty(lastValue)) return "INITIAL";
 
@@ -46,6 +54,13 @@ public class CovDetectionService
             double current = Convert.ToDouble(currentValue, System.Globalization.CultureInfo.InvariantCulture);
             double last    = Convert.ToDouble(lastValue,    System.Globalization.CultureInfo.InvariantCulture);
 
+            if (string.Equals(covMode, "absolute", StringComparison.OrdinalIgnoreCase) && covDeadband.HasValue)
+            {
+                if (Math.Abs(current - last) >= covDeadband.Value) return "COV";
+                return null;
+            }
+
+            // Relative deadband (default).
             if (last != 0)
             {
                 double changePercent = Math.Abs((current - last) / last) * 100;

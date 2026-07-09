@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json.schemas.azure.com/vs/2017/03/launchsettings.json",
+  "profiles": {
+    "PLCGateway": {
+      "commandName": "Project",
+      "dotnetRunMessages": true,
+      "applicationUrl": "http://localhost:5200",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      }
+    }
+  }
+}

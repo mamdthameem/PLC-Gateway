@@ -10,7 +10,6 @@ public class CalculationService
 {
     private readonly DatabaseService _db;
     private readonly ILogger<CalculationService> _logger;
-    private readonly int _activeImpellerCount;
 
     private const string TAG_BLAST       = "Blast ON/OFF";
     private const string TAG_MACHINE_ST  = "Machine status";
@@ -18,85 +17,106 @@ public class CalculationService
     private const string TAG_TONNAGE     = "Tonnage";
     private const string ADDR_MACHINE_ST = "DB60.DBB0";
 
-    private static readonly string[] TAG_CURRENT =
-    {
-        "Current_imp_1","Current_imp_2","Current_imp_3","Current_imp_4","Current_imp_5",
-        "Current_imp_6","Current_imp_7","Current_imp_8","Current_imp_9","Current_imp_10"
-    };
+    private const int AggBatchSize = 10000;
+    private static readonly string[] AggTags = { TAG_BLAST, TAG_MACHINE_ST, TAG_SHOT_REFILL };
+    private static readonly HashSet<string> RefillChangeReasons =
+        new(StringComparer.Ordinal) { "COV", "VALUE_CHANGE", "STATE_CHANGE" };
 
     public CalculationService(
         DatabaseService db,
         ILogger<CalculationService> logger,
         IConfiguration configuration)
     {
-        _db                  = db;
-        _logger              = logger;
-        _activeImpellerCount = configuration.GetValue<int>("EnergyCalculation:ActiveImpellerCount", 10);
+        _db     = db;
+        _logger = logger;
     }
 
     // ════════════════════════════════════════════════════════════════════════
-    // SECTION 1 — Lifetime parameters (called every minute by AggregationService)
+    // SECTION 1 — Lifetime parameters (incremental; called every minute)
+    //
+    // Each pass folds only Tier 2 rows newer than the stored watermark into running
+    // accumulators (plc_aggregation_state), then emits the 9 lifetime parameters plus the
+    // shots-breakdown table. Semantically identical to the previous full-replay engine, but
+    // it no longer re-reads the whole history (and energy is a running sum of the per-cycle
+    // energy_kwh stored at cycle close, not a per-cycle amp re-query).
     // ════════════════════════════════════════════════════════════════════════
 
     public async Task ComputeLifetimeParametersAsync()
     {
         try
         {
-            var epoch = new DateTime(2000, 1, 1);
-            var now   = DateTime.Now;
+            var state = await _db.GetAggregationStateAsync();
 
-            // #1 machine_status — live from Tier 1
+            // 1. Fold new Tier 2 events into the running accumulators.
+            while (true)
+            {
+                var events = await _db.GetNewAggregationEventsAsync(state.LastHistId, AggTags, AggBatchSize);
+                if (events.Count == 0) break;
+
+                foreach (var ev in events)
+                {
+                    switch (ev.ParameterName)
+                    {
+                        case TAG_BLAST:      FoldBlast(state, ev);         break;
+                        case TAG_MACHINE_ST: FoldMachine(state, ev);       break;
+                        case TAG_SHOT_REFILL: await FoldRefillAsync(state, ev); break;
+                    }
+                    state.LastHistId = ev.Id;
+                }
+
+                if (events.Count < AggBatchSize) break;
+            }
+
+            // 2. Fold new completed cycles into the running energy total.
+            var (energyDelta, maxCycle) = await _db.GetCycleEnergyAboveAsync(state.LastCycleNumber);
+            state.EnergyTotal     += energyDelta;
+            state.LastCycleNumber  = maxCycle;
+
+            await _db.SaveAggregationStateAsync(state);
+
+            // 3. Emit parameters from the accumulators + live Tier 1 values.
+            var now = DateTime.Now;
+
             var machineStatusRec = await _db.GetCurrentValueAsync(ADDR_MACHINE_ST);
             decimal machineStatusVal = machineStatusRec?.Value != null && machineStatusRec.Value != "0" ? 1m : 0m;
             await _db.UpsertLifetimeParameterAsync("machine_status", machineStatusVal);
 
-            // #3 production_qty_kg — latest raw Tonnage value from Tier 1 (PLC running accumulator)
             var tonnageRec = await _db.GetCurrentValueByNameAsync(TAG_TONNAGE);
             double productionKg = ParseDouble(tonnageRec?.Value);
             await _db.UpsertLifetimeParameterAsync("production_qty_kg", (decimal)Math.Round(productionKg, 2));
 
-            // #2, #6, #10, reblast_count — shared window parameters
-            var windowParams = await ComputeWindowParametersAsync(epoch, now);
-            foreach (var kv in windowParams)
-                await _db.UpsertLifetimeParameterAsync(kv.Key, kv.Value);
+            double blastSec = state.BlastClosedSec +
+                (state.BlastOn && state.BlastSegStart.HasValue ? (now - state.BlastSegStart.Value).TotalSeconds : 0);
+            await _db.UpsertLifetimeParameterAsync("blast_time_sec", (decimal)Math.Round(blastSec, 1));
 
-            // #4 energy_kwh_total — per-cycle avg amps × duration hours, summed across impellers and cycles
-            var allCycles = await _db.GetCyclesByTimeRangeAsync(epoch, now);
-            double totalKwh = await ComputeEnergyKwhFromCyclesAsync(allCycles);
+            double machineOnSec = state.MachineClosedSec +
+                (state.MachineOn && state.MachineSegStart.HasValue ? (now - state.MachineSegStart.Value).TotalSeconds : 0);
+            double machineUtility = machineOnSec > 0 ? Math.Min(blastSec / machineOnSec * 100.0, 100.0) : 0;
+            await _db.UpsertLifetimeParameterAsync("machine_utility_pct", (decimal)Math.Round(machineUtility, 2));
+
+            await _db.UpsertLifetimeParameterAsync("cycle_count", state.CycleCount);
+
+            double totalKwh = (double)state.EnergyTotal;
             await _db.UpsertLifetimeParameterAsync("energy_kwh_total", (decimal)Math.Round(totalKwh, 3));
 
-            // #5 energy_per_casting_kwh_kg
             double energyPerCasting = productionKg > 0 ? totalKwh / productionKg : 0;
             await _db.UpsertLifetimeParameterAsync("energy_per_casting_kwh_kg", (decimal)Math.Round(energyPerCasting, 4));
 
-            // #11 last_refill_epoch_sec
-            var lastRefill = await _db.GetLatestHistoricalAsync(TAG_SHOT_REFILL);
-            if (lastRefill != null)
+            if (state.LastRefillAnyTs.HasValue)
             {
-                long epochSec = ((DateTimeOffset)lastRefill.Timestamp).ToUnixTimeSeconds();
+                long epochSec = ((DateTimeOffset)state.LastRefillAnyTs.Value).ToUnixTimeSeconds();
                 await _db.UpsertLifetimeParameterAsync("last_refill_epoch_sec", (decimal)epochSec);
             }
 
-            // #7 shots breakdown table — (refill_timestamp, blast_count_since_previous_refill) pairs
-            var breakdown = await ComputeShotsBreakdownAsync(epoch, now);
-            await _db.ClearLifetimeShotsBreakdownAsync();
-            foreach (var (ts, count) in breakdown)
-                await _db.InsertLifetimeShotsBreakdownAsync(ts, count);
-
-            // #8 avg_shot_refill_time_sec = elapsed time since first refill ÷ total refill count
-            var refillEvents = (await _db.GetStateChangesAsync(TAG_SHOT_REFILL, epoch, now))
-                .Where(r => r.StorageReason == "COV" || r.StorageReason == "VALUE_CHANGE" || r.StorageReason == "STATE_CHANGE")
-                .OrderBy(r => r.Timestamp)
-                .ToList();
             decimal avgRefillTimeSec = 0;
-            if (refillEvents.Count > 0)
+            if (state.RefillCount > 0 && state.FirstRefillChangeTs.HasValue)
             {
-                double elapsedSec = (now - refillEvents[0].Timestamp).TotalSeconds;
-                avgRefillTimeSec = (decimal)Math.Round(elapsedSec / refillEvents.Count, 1);
+                double elapsedSec = (now - state.FirstRefillChangeTs.Value).TotalSeconds;
+                avgRefillTimeSec = (decimal)Math.Round(elapsedSec / state.RefillCount, 1);
             }
             await _db.UpsertLifetimeParameterAsync("avg_shot_refill_time_sec", avgRefillTimeSec);
 
-            _logger.LogDebug("Lifetime parameters updated at {time}", now);
+            _logger.LogDebug("Lifetime parameters updated at {time} (watermark id {id}).", now, state.LastHistId);
         }
         catch (Exception ex)
         {
@@ -104,10 +124,82 @@ public class CalculationService
         }
     }
 
+    // Folds one Blast ON/OFF event into blast on-time + cycle-count accumulators.
+    // On-time uses a running "currently on" segment seeded from the first record's previous
+    // value; cycle_count counts rising edges (off→on) using each record's own previous value.
+    private static void FoldBlast(AggregationState s, AggEvent ev)
+    {
+        bool newState = ev.ValueBool ?? false;
+
+        if (!s.BlastSeeded)
+        {
+            bool prevOn = IsBlastOn(ev.PreviousValue);
+            s.BlastOn = prevOn;
+            s.BlastSegStart = prevOn ? ev.Timestamp : null;
+            s.BlastSeeded = true;
+            s.FirstBlastTs ??= ev.Timestamp;
+        }
+
+        if (s.BlastOn && !newState && s.BlastSegStart.HasValue)
+            s.BlastClosedSec += (ev.Timestamp - s.BlastSegStart.Value).TotalSeconds;
+        else if (!s.BlastOn && newState)
+            s.BlastSegStart = ev.Timestamp;
+        s.BlastOn = newState;
+
+        if (!IsBlastOn(ev.PreviousValue) && newState)
+            s.CycleCount++;
+    }
+
+    // Folds one Machine status event into machine on-time. Machine on-time is only accumulated
+    // from the first blast timestamp onward (the utility-ratio denominator clamp), matching the
+    // previous engine exactly.
+    private static void FoldMachine(AggregationState s, AggEvent ev)
+    {
+        if (s.FirstBlastTs == null) return;
+        if (ev.Timestamp <= s.FirstBlastTs.Value) return;
+
+        bool newState = ev.ValueBool ?? false;
+
+        if (!s.MachineSeeded)
+        {
+            bool prevOn = IsMachineOn(ev.PreviousValue);
+            s.MachineOn = prevOn;
+            s.MachineSegStart = prevOn ? ev.Timestamp : s.FirstBlastTs;
+            s.MachineSeeded = true;
+        }
+
+        if (s.MachineOn && !newState && s.MachineSegStart.HasValue)
+            s.MachineClosedSec += (ev.Timestamp - s.MachineSegStart.Value).TotalSeconds;
+        else if (!s.MachineOn && newState)
+            s.MachineSegStart = ev.Timestamp;
+        s.MachineOn = newState;
+    }
+
+    // Folds one refill-weight event: tracks the latest refill (any reason) for last_refill_epoch,
+    // and for actual change events maintains the refill count/first-time and appends a shots-
+    // breakdown row (blast rising edges since the previous refill).
+    private async Task FoldRefillAsync(AggregationState s, AggEvent ev)
+    {
+        if (s.LastRefillAnyTs == null || ev.Timestamp > s.LastRefillAnyTs.Value)
+            s.LastRefillAnyTs = ev.Timestamp;
+
+        if (!RefillChangeReasons.Contains(ev.StorageReason)) return;
+
+        s.RefillCount++;
+        s.FirstRefillChangeTs ??= ev.Timestamp;
+
+        if (s.PrevRefillChangeTs.HasValue)
+        {
+            int blastCount = await _db.CountBlastRisingEdgesBetweenAsync(
+                TAG_BLAST, s.PrevRefillChangeTs.Value, ev.Timestamp);
+            await _db.InsertLifetimeShotsBreakdownAsync(ev.Timestamp, blastCount);
+        }
+
+        s.PrevRefillChangeTs = ev.Timestamp;
+    }
+
     // ════════════════════════════════════════════════════════════════════════
-    // SECTION 2 — Filtered parameters (called by FilteredCalculationService)
-    // Writes aggregate results to plc_filtered_parameters, per-cycle data to
-    // plc_filtered_cycle_data, and shots breakdown to plc_filtered_shots_breakdown.
+    // SECTION 2 — Filtered parameters (on-demand, per calculation_requests row)
     // ════════════════════════════════════════════════════════════════════════
 
     public async Task ComputeFilteredParametersAsync(
@@ -119,7 +211,6 @@ public class CalculationService
     {
         try
         {
-            // 1. Resolve which cycles are in scope
             List<PlcCycle> cycles = filterBy switch
             {
                 "cycle" when filterCycleFrom.HasValue && filterCycleTo.HasValue
@@ -132,32 +223,30 @@ public class CalculationService
             DateTime windowStart = cycles.Count > 0 ? cycles.Min(c => c.BlastStart) : filterStart;
             DateTime windowEnd   = cycles.Count > 0 ? cycles.Max(c => c.BlastEnd)   : filterEnd;
 
-            // 2. Shared window parameters (#2, #6, #10, reblast_count)
+            // Shared window parameters (blast_time_sec, machine_utility_pct, cycle_count).
             var windowParams = await ComputeWindowParametersAsync(windowStart, windowEnd);
             foreach (var kv in windowParams)
                 await _db.InsertFilteredParameterAsync(requestId, kv.Key, kv.Value);
 
-            // 3. Production used only as energy_per_casting denominator — not stored as a display parameter
-            double productionKg = await ComputeProductionKgWindowAsync(windowStart, windowEnd);
-
-            // 4. #4 energy: per-cycle avg amps × duration hours, cycles in scope only
-            double totalKwh = await ComputeEnergyKwhFromCyclesAsync(cycles);
+            // Production + energy come straight from the values stored per cycle at close.
+            double productionKg = cycles.Sum(c => c.ProductionKg ?? 0);
+            double totalKwh     = cycles.Sum(c => c.EnergyKwh ?? 0);
             await _db.InsertFilteredParameterAsync(requestId, "energy_kwh_total", (decimal)Math.Round(totalKwh, 3));
 
-            // 5. #5 energy per casting
             double energyPerCasting = productionKg > 0 ? totalKwh / productionKg : 0;
             await _db.InsertFilteredParameterAsync(requestId, "energy_per_casting_kwh_kg", (decimal)Math.Round(energyPerCasting, 4));
 
-            // last_refill_epoch_sec is a live/absolute value — not relevant to a filtered window
-
-            // 7. #7 shots breakdown table (effective_shots_usage and avg_shot_refill_time_sec not in Section 2)
+            // Shots breakdown table for the window.
             var breakdown = await ComputeShotsBreakdownAsync(windowStart, windowEnd);
             foreach (var (ts, count) in breakdown)
                 await _db.InsertFilteredShotsBreakdownAsync(requestId, ts, count);
 
-            // 8. Per-cycle breakdown
+            // Per-cycle breakdown + per-metal production split.
             if (cycles.Count > 0)
+            {
                 await ComputePerCycleDataAsync(requestId, cycles);
+                await ComputeMetalProductionAsync(requestId, cycles);
+            }
 
             _logger.LogDebug("Filtered parameters stored for request {id} ({n} cycles)", requestId, cycles.Count);
         }
@@ -168,26 +257,18 @@ public class CalculationService
         }
     }
 
-    // ════════════════════════════════════════════════════════════════════════
-    // SHARED WINDOW PARAMETERS — numeric parameters identical for S1 and S2
-    // (#2 machine_utility_pct, #6 blast_time_sec, #10 cycle_count, reblast_count)
-    // ════════════════════════════════════════════════════════════════════════
-
+    // Shared window parameters, identical for the filtered window: replays the (bounded) event
+    // stream for the window — acceptable here because Section 2 is user-triggered and windowed.
     private async Task<Dictionary<string, decimal?>> ComputeWindowParametersAsync(DateTime start, DateTime end)
     {
         var result = new Dictionary<string, decimal?>();
 
-        // Fetch blast records once — reused for both blast_time and cycle_count
         var blastRecords = await _db.GetStateChangesAsync(TAG_BLAST, start, end);
 
         double blastSec = ComputeOnTimeSeconds(blastRecords, start, end,
             isOn: v => v == "1" || v?.ToLower() == "true");
         result["blast_time_sec"] = (decimal)Math.Round(blastSec, 1);
 
-        // Machine utility denominator: only count machine-on time from when blast data begins
-        // in this window.  Without this, the lifetime ratio is meaningless when blast recording
-        // started months after machine-status recording (e.g., blast data from today, machine
-        // status from January → utility near 0% even when machine blasts constantly).
         DateTime machineStart = blastRecords.Count > 0 ? blastRecords[0].Timestamp : start;
         double machineOnSec = await ComputeMachineOnTimeSecondsAsync(machineStart, end);
         double machineUtility = machineOnSec > 0 ? Math.Min(blastSec / machineOnSec * 100.0, 100.0) : 0;
@@ -198,32 +279,15 @@ public class CalculationService
         return result;
     }
 
-    // ════════════════════════════════════════════════════════════════════════
-    // PER-CYCLE BREAKDOWN (Section 2 only — plc_filtered_cycle_data)
-    // ════════════════════════════════════════════════════════════════════════
-
+    // Per-cycle breakdown (plc_filtered_cycle_data): production_kg and energy_kwh are read
+    // from the cycle rows; shots_usage = refill weight consumed in the cycle ÷ production.
     private async Task ComputePerCycleDataAsync(int requestId, List<PlcCycle> cycles)
     {
-        PlcCycle? prevCycle = await _db.GetCyclePrecedingAsync(cycles[0].CycleNumber);
-        double prevTonnage  = prevCycle?.TonnageKg ?? 0;
-
         foreach (var cycle in cycles)
         {
-            // Production: accumulated tonnage delta vs previous cycle
-            double production = cycle.TonnageKg.HasValue
-                ? Math.Max(cycle.TonnageKg.Value - prevTonnage, 0)
-                : 0;
+            double production = cycle.ProductionKg ?? 0;
+            double energyKwh  = cycle.EnergyKwh ?? 0;
 
-            // Energy: avg amps per impeller × duration hours, summed across all impellers
-            double durationHours = cycle.DurationSec / 3600.0;
-            double energyKwh = 0;
-            for (int i = 0; i < _activeImpellerCount; i++)
-            {
-                double avgAmps = await ComputeAvgAmpsInWindowAsync(i, cycle.BlastStart, cycle.BlastEnd);
-                energyKwh += avgAmps * durationHours;
-            }
-
-            // Shots usage: refill weight during cycle / production (kept for per-cycle table)
             double refillInCycle = await ComputeTotalRefillWeightAsync(cycle.BlastStart, cycle.BlastEnd);
             double shotsUsage    = production > 0 ? refillInCycle / production : 0;
 
@@ -231,64 +295,56 @@ public class CalculationService
                 requestId, cycle,
                 (decimal)Math.Round(production, 2),
                 (decimal)Math.Round(energyKwh,  3),
-                (decimal)Math.Round(shotsUsage,  4));
-
-            prevTonnage = cycle.TonnageKg ?? prevTonnage;
+                (decimal)Math.Round(shotsUsage, 4));
         }
     }
 
-    // ════════════════════════════════════════════════════════════════════════
-    // FORMULA IMPLEMENTATIONS
-    // ════════════════════════════════════════════════════════════════════════
-
-    // #3 Production — Section 2: Tonnage at window end minus Tonnage at window start.
-    // Uses the last known reading before each boundary so a window with only one COV
-    // record (or none) still produces a correct delta instead of returning 0.
-    private async Task<double> ComputeProductionKgWindowAsync(DateTime start, DateTime end)
+    // Per-metal production: each cycle's production is split across its declared casting metals
+    // proportionally by declared weight. Cycles with no declared weight go to 'unspecified'.
+    private async Task ComputeMetalProductionAsync(int requestId, List<PlcCycle> cycles)
     {
-        var baselineRec = await _db.GetLatestHistoricalBeforeAsync(TAG_TONNAGE, start);
-        var finalRec    = await _db.GetLatestHistoricalBeforeAsync(TAG_TONNAGE, end);
-        double baseline = ParseDouble(baselineRec?.Value);
-        double final    = ParseDouble(finalRec?.Value);
-        return Math.Max(final - baseline, 0);
-    }
+        var byMetal = new Dictionary<string, double>(StringComparer.Ordinal);
 
-    // #4 Energy — per-cycle: arithmetic mean of COV amp readings per impeller × duration hours
-    private async Task<double> ComputeEnergyKwhFromCyclesAsync(List<PlcCycle> cycles)
-    {
-        double totalKwh = 0;
         foreach (var cycle in cycles)
         {
-            double durationHours = cycle.DurationSec / 3600.0;
-            for (int i = 0; i < _activeImpellerCount; i++)
+            double production = cycle.ProductionKg ?? 0;
+            if (production <= 0) continue;
+
+            var slots = new (string? Name, double Weight)[]
             {
-                double avgAmps = await ComputeAvgAmpsInWindowAsync(i, cycle.BlastStart, cycle.BlastEnd);
-                totalKwh += avgAmps * durationHours;
+                (cycle.Metal1Name, cycle.Metal1WeightKg ?? 0),
+                (cycle.Metal2Name, cycle.Metal2WeightKg ?? 0),
+                (cycle.Metal3Name, cycle.Metal3WeightKg ?? 0),
+                (cycle.Metal4Name, cycle.Metal4WeightKg ?? 0),
+            };
+
+            double totalWeight = slots.Where(s => s.Weight > 0).Sum(s => s.Weight);
+
+            if (totalWeight <= 0)
+            {
+                Accumulate(byMetal, "unspecified", production);
+                continue;
+            }
+
+            foreach (var slot in slots)
+            {
+                if (slot.Weight <= 0) continue;
+                string name = string.IsNullOrWhiteSpace(slot.Name) ? "unspecified" : slot.Name!;
+                Accumulate(byMetal, name, production * slot.Weight / totalWeight);
             }
         }
-        return totalKwh;
+
+        foreach (var kv in byMetal)
+            await _db.InsertFilteredMetalProductionAsync(requestId, kv.Key, (decimal)Math.Round(kv.Value, 2));
     }
 
-    // Arithmetic mean of all COV amp readings for one impeller within a time window.
-    // Falls back to the last known reading before the window when there are no in-window records
-    // (short cycles often have no COV event if current stayed steady).
-    private async Task<double> ComputeAvgAmpsInWindowAsync(int impellerIndex, DateTime start, DateTime end)
+    private static void Accumulate(Dictionary<string, double> map, string key, double value)
     {
-        string tagName = TAG_CURRENT[impellerIndex];
-        var records = await _db.GetStateChangesAsync(tagName, start, end);
-        if (records.Count > 0)
-        {
-            double sum = 0;
-            foreach (var r in records) sum += ParseDouble(r.Value);
-            return sum / records.Count;
-        }
-        var lastBefore = await _db.GetLatestHistoricalBeforeAsync(tagName, start);
-        return ParseDouble(lastBefore?.Value);
+        map[key] = (map.TryGetValue(key, out var cur) ? cur : 0) + value;
     }
 
-    // #7 Shots breakdown — for each consecutive pair of actual refill events (COV only, heartbeats excluded),
-    // count Blast ON/OFF rising edges between them.
-    // Returns (refill_timestamp, blast_count_since_previous_refill) pairs.
+    // #7 shots breakdown — for each consecutive pair of actual refill events, count blast
+    // rising edges between them. Returns (refill_timestamp, blast_count) pairs.
     private async Task<List<(DateTime RefillTimestamp, int BlastCount)>> ComputeShotsBreakdownAsync(
         DateTime start, DateTime end)
     {
@@ -319,12 +375,6 @@ public class CalculationService
         return ComputeOnTimeSeconds(records, start, end, isOn: v => v != null && v != "0");
     }
 
-    private async Task<double> ComputeBlastTimeSecondsAsync(DateTime start, DateTime end)
-    {
-        var records = await _db.GetStateChangesAsync(TAG_BLAST, start, end);
-        return ComputeOnTimeSeconds(records, start, end, isOn: v => v == "1" || v?.ToLower() == "true");
-    }
-
     private async Task<double> ComputeTotalRefillWeightAsync(DateTime start, DateTime end)
     {
         var records = await _db.GetStateChangesAsync(TAG_SHOT_REFILL, start, end);
@@ -341,6 +391,9 @@ public class CalculationService
     // LOW-LEVEL HELPERS
     // ════════════════════════════════════════════════════════════════════════
 
+    private static bool IsBlastOn(string? v) => v == "1" || string.Equals(v, "true", StringComparison.OrdinalIgnoreCase);
+    private static bool IsMachineOn(string? v) => !string.IsNullOrEmpty(v) && v != "0";
+
     private static double ComputeOnTimeSeconds(
         List<PlcHistoricalData> records,
         DateTime windowStart,
@@ -351,9 +404,6 @@ public class CalculationService
 
         double totalSec  = 0;
         bool currentlyOn = isOn(records[0].PreviousValue);
-        // If the signal was already ON at the window boundary we don't know when it turned on
-        // before our first record — clamp the segment start to the first record timestamp so
-        // a distant epoch window doesn't inflate lifetime totals.
         DateTime segStart = currentlyOn ? records[0].Timestamp : windowStart;
 
         foreach (var r in records)

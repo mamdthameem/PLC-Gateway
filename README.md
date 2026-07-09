@@ -1,8 +1,20 @@
 # PLCGateway
 
-Backend service for a shot-blast machine (foundry). Reads a Siemens S7-1200 PLC every second, stores raw tag history in PostgreSQL, and computes business parameters for a separate dashboard application.
+Unified application for a shot-blast machine (foundry). A single ASP.NET Core (.NET 10) app,
+hosted under IIS, that reads a Siemens S7-1200 PLC every second (background hosted services),
+stores raw tag history in PostgreSQL, computes business parameters, **serves the dashboard's
+JSON API**, and **serves the React dashboard build** from `wwwroot/` — all in one process. The
+cloud reaches the app only over HTTPS via secured `/api/admin/*` endpoints, never the database.
 
-**Stack:** .NET 10, C#, S7.NetPlus, Npgsql/PostgreSQL, runs as a Windows Service.
+**Stack:** .NET 10, C#, ASP.NET Core (WebApplication + hosted services), S7.NetPlus,
+Npgsql/PostgreSQL, JWT auth; Vite + React dashboard built into `wwwroot`.
+
+> **Redesign note.** This replaced the earlier headless Windows Service + separate dashboard/API.
+> Key changes: PLC-disconnect correctness (forced-OFF + stale flags), batched region reads with
+> an in-memory cache and batched writes, typed value columns (numeric/boolean/text; old TEXT
+> `value` frozen), an incremental/watermarked Section 1 engine, Section 2 per-metal production,
+> a real 60 s heartbeat, absolute COV deadbands for accumulators, and IIS hosting with secured
+> cloud admin endpoints + a license check. See `DEPLOYMENT-NOTES.md` and `CLAUDE.md`.
 
 ---
 
@@ -297,28 +309,43 @@ psql -U postgres -d sreesakthi_gateway -f PLCGateway/migration.sql
 
 Safe to run on existing databases — uses `IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`, and `DO $$ ... $$` blocks throughout.
 
-### 2. Development (console)
+### 2. Run locally (one process)
+
+The dashboard source is vendored in `dashboard/`; its build output lives in `PLCGateway/wwwroot`
+and is served by the same app. Build the dashboard once (only needed if `wwwroot` is missing or
+the frontend changed), then run the backend — one process serves the UI and the API.
 
 ```bash
-cd PLCGateway
-dotnet run
+# (once, or after frontend changes) build the dashboard into wwwroot
+cd dashboard
+npm install
+npm run build          # emits into ../PLCGateway/wwwroot (same-origin)
+
+# run the unified app (serves dashboard + API + PLC pipeline)
+cd ../PLCGateway
+dotnet run             # listens on http://localhost:5200 (see Properties/launchSettings.json)
+# one-off recovery: dotnet run -- --rebuild-aggregation  (replays Section 1 from history)
 ```
 
-### 3. Production (Windows Service)
+Then open **http://localhost:5200** and log in with `admin` / `admin123` (change this password).
+
+Optional — frontend hot-reload while developing the UI: run `dotnet run` (backend on `:5200`)
+and, in another terminal, `cd dashboard && npm run dev`. The Vite dev server proxies `/api` to
+the backend. This is only for editing the dashboard; the shipped app is the single process above.
+
+### 3. Production (IIS)
+
+Publish and host under IIS with the .NET 10 Hosting Bundle (ASP.NET Core Module, InProcess).
+The application pool must be **AlwaysRunning / Idle Time-out 0 / Preload Enabled** so the PLC
+scan loop is never idled, and **overlapped recycle disabled** so two pollers never run at once.
 
 ```bash
-dotnet publish -c Release -o ./publish
-
-# Run as Administrator:
-sc create PLCGatewayService binPath="D:\PLCGateway\publish\PLCGateway.exe"
-sc start PLCGatewayService
+dotnet publish -c Release /p:PublishProfile=FolderProfile
+# copy bin/Release/net10.0/publish/ to the IIS site root (includes wwwroot + web.config)
 ```
 
-To stop and remove:
-```bash
-sc stop PLCGatewayService
-sc delete PLCGatewayService
-```
+Full step-by-step (Windows features, certificate/443 binding, admin IP restriction, router
+port-forwarding, config placeholders) is in **`DEPLOYMENT-NOTES.md`**.
 
 ---
 
@@ -335,7 +362,7 @@ sc delete PLCGatewayService
 
 **Shots breakdown table is empty**
 - `plc_shots_breakdown` requires at least 2 `Refil shots weight` COV events in `plc_historical_data`
-- It is cleared and rewritten every minute — check `AggregationService` is running
+- It is maintained by upsert (keyed on `refill_timestamp`) as the incremental engine runs — check `AggregationService` is running; run once with `--rebuild-aggregation` if the incremental state looks stale
 
 **Spare status not updating**
 - All 140 trigger/run-hour/replaced tags must be defined in `appsettings.json`

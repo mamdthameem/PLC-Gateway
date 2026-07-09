@@ -17,5 +17,7 @@ namespace PLCGateway.Models
         public string? Metal4Name { get; set; }
         public double? Metal4WeightKg { get; set; }
         public double? TonnageKg { get; set; }
+        public double? ProductionKg { get; set; }
+        public double? EnergyKwh { get; set; }
     }
 }
