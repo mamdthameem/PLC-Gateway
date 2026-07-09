@@ -1,7 +1,4 @@
-import React, { createContext, useContext, useMemo } from 'react';
-import { useAuth } from './AuthContext';
-import { dataService } from '../services/dataService';
-import { formatDate, daysUntil } from '../utils/formatters';
+import React, { createContext, useContext } from 'react';
 
 export interface AppNotification {
   id: string;
@@ -19,51 +16,10 @@ interface NotificationContextType {
 
 const NotificationContext = createContext<NotificationContextType | undefined>(undefined);
 
+// This single-site app has no user-subscription/expiry concept, so there are currently no
+// notifications. The provider is kept as the seam for future PLC/maintenance alerts.
 export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user, isAdmin } = useAuth();
-
-  const notifications = useMemo((): AppNotification[] => {
-    const list: AppNotification[] = [];
-
-    if (isAdmin) {
-      const expiringUsers = dataService.getUsersExpiringWithinDays(7);
-      expiringUsers.forEach((u, i) => {
-        const d = daysUntil(u.validUntil);
-        const dayText = d === 0 ? 'today' : d === 1 ? 'tomorrow' : `in ${d} days`;
-        list.push({
-          id: `expiry-${u.id}-${i}`,
-          type: 'expiry',
-          title: 'User access expiring',
-          message: `${u.name || u.email} expires ${dayText} (${formatDate(u.validUntil)})`,
-          severity: (d ?? 99) <= 1 ? 'warning' : 'info',
-          createdAt: new Date(),
-        });
-      });
-    }
-
-    if (user?.validUntil && user.role !== 'admin') {
-      const d = daysUntil(user.validUntil);
-      if (d !== null && d >= 0) {
-        const dayText = d === 0 ? 'today' : d === 1 ? 'tomorrow' : `in ${d} days`;
-        list.push({
-          id: 'my-expiry',
-          type: 'expiry',
-          title: 'Your access expires soon',
-          message: `Your access expires ${dayText} (${formatDate(user.validUntil)}). Contact your administrator to renew.`,
-          severity: d <= 3 ? 'warning' : 'info',
-          createdAt: new Date(),
-        });
-      }
-    }
-
-    return list;
-  }, [user?.id, user?.validUntil, isAdmin]);
-
-  const value: NotificationContextType = {
-    notifications,
-    unreadCount: notifications.length,
-  };
-
+  const value: NotificationContextType = { notifications: [], unreadCount: 0 };
   return (
     <NotificationContext.Provider value={value}>
       {children}

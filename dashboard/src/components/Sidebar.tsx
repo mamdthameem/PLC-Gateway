@@ -3,7 +3,6 @@ import { Avatar, Tooltip } from '@mui/material';
 import { motion } from 'framer-motion';
 import { useLocation } from 'react-router-dom';
 import DashboardIcon from '@mui/icons-material/Dashboard';
-import PeopleIcon from '@mui/icons-material/People';
 import LogoutIcon from '@mui/icons-material/Logout';
 import { useAuth } from '../contexts/AuthContext';
 import { useUI } from '../contexts/UIContext';
@@ -32,7 +31,7 @@ const nameToColor = (name: string = ''): string => {
 
 const SidebarInner: React.FC = () => {
   const { open } = useSidebar();
-  const { user, logout, isAdmin } = useAuth();
+  const { user, logout } = useAuth();
   const location = useLocation();
   const [logoutHover, setLogoutHover] = useState(false);
 
@@ -51,14 +50,6 @@ const SidebarInner: React.FC = () => {
       },
     },
   ];
-
-  if (isAdmin) {
-    menuItems.push({
-      label: 'Subscribed Users',
-      to: '/users',
-      icon: <PeopleIcon sx={{ fontSize: 20 }} />,
-    });
-  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', justifyContent: 'space-between' }}>

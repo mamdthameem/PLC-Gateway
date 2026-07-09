@@ -20,7 +20,8 @@ public class HistoricalController : ControllerBase
 
     /// <summary>
     /// Time-series records for a single parameter from plc_historical_data.
-    /// Heartbeat records are excluded (only COV/STATE_CHANGE/VALUE_CHANGE/BLAST_ON/INITIAL).
+    /// Returns all recorded samples (COV/STATE_CHANGE/VALUE_CHANGE/BLAST_ON/INITIAL/HEARTBEAT),
+    /// including the periodic 60s heartbeats; only synthetic DISCONNECT events are excluded.
     /// Query: ?name=Blast+ON%2FOFF&start=2026-05-12T00:00:00Z&end=2026-05-13T00:00:00Z
     /// </summary>
     [HttpGet]

@@ -42,7 +42,6 @@ export const TopBar: React.FC = () => {
         const path = location.pathname;
         if (path === '/dashboard' || path === '/') return 'Dashboard';
         if (path === '/database') return 'Database';
-        if (path === '/users') return 'Subscribed Users';
         return 'Dashboard';
     };
 

@@ -1,33 +1,13 @@
-// Auth & user management
+// Authenticated dashboard user (from the backend JWT). Single-site only — no tenant,
+// customer, or subscription concept exists in this client app.
 export type UserRole = 'admin' | 'user';
 
 export interface User {
   id: string;
+  username: string;
   email: string;
   name: string;
-  username?: string;
-  industryName?: string;
-  state?: string;
-  password?: string;
   role: UserRole;
-  customerId?: string;
-  isApproved: boolean;
-  unapprovedReason?: string;
-  validUntil?: Date;
-  assignedMachineIds: string[];
-  createdAt: Date;
-}
-
-export interface Customer {
-  id: string;
-  name: string;
-  email: string;
-  companyName?: string;
-  address?: string;
-  phone?: string;
-  createdAt: Date;
-  machineIds: string[];
-  userIds: string[];
 }
 
 // Live machine status (plc_current_values WHERE address = 'DB60.DBB0')

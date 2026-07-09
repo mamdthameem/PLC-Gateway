@@ -8,7 +8,6 @@ import { NotificationProvider } from './contexts/NotificationContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Login } from './components/Login';
 import { MachineDashboard } from './components/MachineDashboard';
-import { UserManagement } from './components/UserManagement';
 import { Sidebar, TopBar } from './components';
 
 const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -52,16 +51,6 @@ const ThemeWrapper: React.FC = () => {
                     <ProtectedRoute>
                       <Layout>
                         <MachineDashboard />
-                      </Layout>
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/users"
-                  element={
-                    <ProtectedRoute requiredRole="admin">
-                      <Layout>
-                        <UserManagement />
                       </Layout>
                     </ProtectedRoute>
                   }

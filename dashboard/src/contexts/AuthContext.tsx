@@ -1,7 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
 import type { User, UserRole } from '../types';
-import { dataService } from '../services/dataService';
-import { isUserExpired } from '../utils/formatters';
 
 interface AuthContextType {
   user: User | null;
@@ -14,102 +12,52 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const TOKEN_KEY = 'plc_gateway_token';
+const USER_KEY = 'plc_gateway_user';
+
+// Decodes the role/name claims out of the backend JWT payload.
+function userFromToken(token: string, loginId: string): User {
+  const base64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+  const payload = JSON.parse(window.atob(base64));
+  const role = (
+    payload.role ||
+    payload['http://schemas.microsoft.com/ws/2008/06/identity/claims/role'] ||
+    'user'
+  ).toLowerCase() as UserRole;
+  const name =
+    payload.unique_name ||
+    payload['http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name'] ||
+    loginId;
+  return { id: payload.jti || '1', username: loginId, email: loginId, name, role };
+}
+
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   const clearSession = () => {
     setUser(null);
-    localStorage.removeItem('plc_gateway_token');
-    localStorage.removeItem('plc_gateway_user');
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(USER_KEY);
   };
 
+  // Restore an existing session from the stored token/user.
   useEffect(() => {
-    // Check for stored session
-    const storedToken = localStorage.getItem('plc_gateway_token');
-    const storedUser = localStorage.getItem('plc_gateway_user');
+    const storedToken = localStorage.getItem(TOKEN_KEY);
+    const storedUser = localStorage.getItem(USER_KEY);
     if (storedToken && storedUser) {
       try {
-        const parsed = JSON.parse(storedUser) as User & { createdAt?: string; validUntil?: string };
-        const hydratedUser: User = {
-          ...parsed,
-          createdAt: parsed.createdAt ? new Date(parsed.createdAt) : new Date(),
-          validUntil: parsed.validUntil ? new Date(parsed.validUntil) : undefined,
-        };
-
-        const isExpired = isUserExpired(hydratedUser.validUntil);
-        if (hydratedUser.isApproved === false || isExpired) {
-          clearSession();
-        } else {
-          setUser(hydratedUser);
-        }
-      } catch (error) {
-        console.error('Failed to parse stored user', error);
+        setUser(JSON.parse(storedUser) as User);
+      } catch {
         clearSession();
       }
     }
     setIsLoading(false);
   }, []);
 
-  useEffect(() => {
-    const validUntil = user?.validUntil;
-    if (!validUntil) return;
-
-    const checkValidity = () => {
-      if (isUserExpired(validUntil)) {
-        clearSession();
-      }
-    };
-
-    checkValidity();
-    const interval = setInterval(checkValidity, 60 * 1000);
-    return () => clearInterval(interval);
-  }, [user?.id, user?.validUntil]);
-
+  // Authenticates against the backend JWT endpoint only. There is no local/offline login.
   const login = async (username: string, password: string): Promise<{ success: boolean; error?: string }> => {
     setIsLoading(true);
-
-    const tryLocalLogin = (): { success: boolean; error?: string; matched?: boolean } => {
-      const normalized = username.trim().toLowerCase();
-      const users = dataService.getUsers();
-      const matchedUser = users.find(u => {
-        const localUser = u as User & { username?: string };
-        const candidates = [
-          localUser.username,
-          localUser.email,
-          localUser.name,
-        ].filter(Boolean).map(v => String(v).toLowerCase());
-        return candidates.includes(normalized);
-      });
-
-      if (!matchedUser) {
-        return { success: false, error: 'Invalid username or password', matched: false };
-      }
-
-      if (matchedUser.isApproved === false) {
-        const reason = (matchedUser.unapprovedReason || '').trim();
-        return {
-          success: false,
-          error: reason ? `Access not approved: ${reason}` : 'User is not approved for access',
-          matched: true,
-        };
-      }
-
-      if (isUserExpired(matchedUser.validUntil)) {
-        return { success: false, error: 'Your access has expired. Please contact your administrator.', matched: true };
-      }
-
-      if (!matchedUser.password || matchedUser.password !== password) {
-        return { success: false, error: 'Invalid username or password', matched: true };
-      }
-
-      setUser(matchedUser);
-      localStorage.setItem('plc_gateway_token', `local-${matchedUser.id}`);
-      localStorage.setItem('plc_gateway_user', JSON.stringify(matchedUser));
-      setIsLoading(false);
-      return { success: true, matched: true };
-    };
-
     try {
       const apiUrl = import.meta.env.VITE_API_URL || '';
       const response = await fetch(`${apiUrl}/api/auth/login`, {
@@ -119,54 +67,30 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       });
 
       if (!response.ok) {
-        // If API login fails, try local users (admin-created users)
-        const localResult = tryLocalLogin();
-        if (localResult.matched) {
-          return { success: localResult.success, error: localResult.error };
-        }
-
-        const errorData = await response.json();
-        setIsLoading(false);
-        return { success: false, error: errorData.message || 'Login failed' };
+        let message = 'Invalid username or password';
+        try {
+          const err = await response.json();
+          if (err?.message) message = err.message;
+        } catch { /* non-JSON error body */ }
+        return { success: false, error: message };
       }
 
       const { token } = await response.json();
-
-      // Basic JWT decoding
-      const base64Url = token.split('.')[1];
-      const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-      const payload = JSON.parse(window.atob(base64));
-
-      const authUser: User = {
-        id: payload.jti || '1',
-        email: username,
-        name: payload.unique_name || username,
-        role: (payload.role || payload["http://schemas.microsoft.com/ws/2008/06/identity/claims/role"] || "user").toLowerCase() as UserRole,
-        isApproved: true,
-        assignedMachineIds: [],
-        createdAt: new Date(),
-        customerId: payload.tenant_id,
-      };
+      const authUser = userFromToken(token, username.trim());
 
       setUser(authUser);
-      localStorage.setItem('plc_gateway_token', token);
-      localStorage.setItem('plc_gateway_user', JSON.stringify(authUser));
-      setIsLoading(false);
+      localStorage.setItem(TOKEN_KEY, token);
+      localStorage.setItem(USER_KEY, JSON.stringify(authUser));
       return { success: true };
     } catch (err) {
       console.error('Login error:', err);
-      const localResult = tryLocalLogin();
-      if (localResult.matched) {
-        return { success: localResult.success, error: localResult.error };
-      }
+      return { success: false, error: 'Connection to the server failed' };
+    } finally {
       setIsLoading(false);
-      return { success: false, error: 'Connection to authentication server failed' };
     }
   };
 
-  const logout = () => {
-    clearSession();
-  };
+  const logout = () => clearSession();
 
   const value: AuthContextType = {
     user,
