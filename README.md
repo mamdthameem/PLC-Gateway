@@ -9,13 +9,6 @@ cloud reaches the app only over HTTPS via secured `/api/admin/*` endpoints, neve
 **Stack:** .NET 10, C#, ASP.NET Core (WebApplication + hosted services), S7.NetPlus,
 Npgsql/PostgreSQL, JWT auth; Vite + React dashboard built into `wwwroot`.
 
-> **Redesign note.** This replaced the earlier headless Windows Service + separate dashboard/API.
-> Key changes: PLC-disconnect correctness (forced-OFF + stale flags), batched region reads with
-> an in-memory cache and batched writes, typed value columns (numeric/boolean/text; old TEXT
-> `value` frozen), an incremental/watermarked Section 1 engine, Section 2 per-metal production,
-> a real 60 s heartbeat, absolute COV deadbands for accumulators, and IIS hosting with secured
-> cloud admin endpoints + a license check. See `DEPLOYMENT-NOTES.md` and `CLAUDE.md`.
-
 ---
 
 ## Architecture
