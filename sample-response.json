@@ -1,0 +1,1654 @@
+{
+  "generatedAtUtc": "2026-07-11T06:42:15.123Z",
+  "plcConnected": true,
+  "lastScanAt": "2026-07-11T06:42:14.902Z",
+  "changedAt": "2026-07-10T22:03:41.117Z",
+  "machineStatus": {
+    "value": "1",
+    "running": true,
+    "isStale": false,
+    "lastUpdated": "2026-07-11T05:58:03.244Z"
+  },
+  "lifetime": [
+    {
+      "parameterName": "avg_shot_refill_time_sec",
+      "value": "12840.6",
+      "updatedAt": "2026-07-11T06:42:00.512Z"
+    },
+    {
+      "parameterName": "blast_time_sec",
+      "value": "184230.5",
+      "updatedAt": "2026-07-11T06:42:00.512Z"
+    },
+    {
+      "parameterName": "cycle_count",
+      "value": "1284",
+      "updatedAt": "2026-07-11T06:42:00.512Z"
+    },
+    {
+      "parameterName": "energy_kwh_total",
+      "value": "5321.744",
+      "updatedAt": "2026-07-11T06:42:00.512Z"
+    },
+    {
+      "parameterName": "energy_per_casting_kwh_kg",
+      "value": "0.0417",
+      "updatedAt": "2026-07-11T06:42:00.512Z"
+    },
+    {
+      "parameterName": "last_refill_epoch_sec",
+      "value": "1783147500",
+      "updatedAt": "2026-07-11T06:42:00.512Z"
+    },
+    {
+      "parameterName": "machine_status",
+      "value": "1",
+      "updatedAt": "2026-07-11T06:42:00.512Z"
+    },
+    {
+      "parameterName": "machine_utility_pct",
+      "value": "63.42",
+      "updatedAt": "2026-07-11T06:42:00.512Z"
+    },
+    {
+      "parameterName": "production_qty_kg",
+      "value": "127540.00",
+      "updatedAt": "2026-07-11T06:42:00.512Z"
+    }
+  ],
+  "shotsBreakdown": [
+    {
+      "refillTimestamp": "2026-07-10T08:14:22Z",
+      "blastCount": 6
+    },
+    {
+      "refillTimestamp": "2026-07-10T11:37:45Z",
+      "blastCount": 8
+    },
+    {
+      "refillTimestamp": "2026-07-10T15:02:18Z",
+      "blastCount": 5
+    },
+    {
+      "refillTimestamp": "2026-07-10T19:26:51Z",
+      "blastCount": 9
+    },
+    {
+      "refillTimestamp": "2026-07-11T02:11:09Z",
+      "blastCount": 7
+    },
+    {
+      "refillTimestamp": "2026-07-11T04:45:00Z",
+      "blastCount": 4
+    }
+  ],
+  "amps": [
+    {
+      "parameterName": "Current_imp_1",
+      "value": "12.4",
+      "lastUpdated": "2026-07-11T06:42:14.902Z"
+    },
+    {
+      "parameterName": "Current_imp_10",
+      "value": "12.5",
+      "lastUpdated": "2026-07-11T06:42:14.902Z"
+    },
+    {
+      "parameterName": "Current_imp_2",
+      "value": "11.9",
+      "lastUpdated": "2026-07-11T06:42:14.902Z"
+    },
+    {
+      "parameterName": "Current_imp_3",
+      "value": "12.7",
+      "lastUpdated": "2026-07-11T06:42:14.902Z"
+    },
+    {
+      "parameterName": "Current_imp_4",
+      "value": "12.1",
+      "lastUpdated": "2026-07-11T06:42:14.902Z"
+    },
+    {
+      "parameterName": "Current_imp_5",
+      "value": "13.0",
+      "lastUpdated": "2026-07-11T06:42:14.902Z"
+    },
+    {
+      "parameterName": "Current_imp_6",
+      "value": "11.6",
+      "lastUpdated": "2026-07-11T06:42:14.902Z"
+    },
+    {
+      "parameterName": "Current_imp_7",
+      "value": "12.8",
+      "lastUpdated": "2026-07-11T06:42:14.902Z"
+    },
+    {
+      "parameterName": "Current_imp_8",
+      "value": "12.2",
+      "lastUpdated": "2026-07-11T06:42:14.902Z"
+    },
+    {
+      "parameterName": "Current_imp_9",
+      "value": "11.8",
+      "lastUpdated": "2026-07-11T06:42:14.902Z"
+    }
+  ],
+  "spareGrid": [
+    {
+      "impellerNum": 1,
+      "spareIndex": 0,
+      "spareName": "Blade",
+      "thresholdHours": 100,
+      "currentRunHours": 12,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 1,
+      "spareIndex": 1,
+      "spareName": "Blade Mounting Piece",
+      "thresholdHours": 300,
+      "currentRunHours": 75,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 1,
+      "spareIndex": 2,
+      "spareName": "Narrow Plate",
+      "thresholdHours": 300,
+      "currentRunHours": 114,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 1,
+      "spareIndex": 3,
+      "spareName": "Curved Plate",
+      "thresholdHours": 600,
+      "currentRunHours": 306,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 1,
+      "spareIndex": 4,
+      "spareName": "Feeding End",
+      "thresholdHours": 2000,
+      "currentRunHours": 1280,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 1,
+      "spareIndex": 5,
+      "spareName": "Bearing End",
+      "thresholdHours": 2000,
+      "currentRunHours": 1540,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 1,
+      "spareIndex": 6,
+      "spareName": "Impeller",
+      "thresholdHours": 300,
+      "currentRunHours": 270,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 1,
+      "spareIndex": 7,
+      "spareName": "Wall Plate",
+      "thresholdHours": 2000,
+      "currentRunHours": 260,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 1,
+      "spareIndex": 8,
+      "spareName": "Control Gauge",
+      "thresholdHours": 300,
+      "currentRunHours": 78,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 1,
+      "spareIndex": 9,
+      "spareName": "Disc Spacer",
+      "thresholdHours": 0,
+      "currentRunHours": 854.6,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 1,
+      "spareIndex": 10,
+      "spareName": "Doom Nut 1/2in",
+      "thresholdHours": 2000,
+      "currentRunHours": 1040,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 1,
+      "spareIndex": 11,
+      "spareName": "Doom Nut 5/8",
+      "thresholdHours": 2000,
+      "currentRunHours": 1300,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 1,
+      "spareIndex": 12,
+      "spareName": "Disc",
+      "thresholdHours": 5000,
+      "currentRunHours": 3900,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 1,
+      "spareIndex": 13,
+      "spareName": "Guide Plate",
+      "thresholdHours": 600,
+      "currentRunHours": 546,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 2,
+      "spareIndex": 0,
+      "spareName": "Blade",
+      "thresholdHours": 100,
+      "currentRunHours": 19,
+      "triggerActive": false,
+      "lastReplacedAt": "2026-05-14T08:12:33Z",
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 2,
+      "spareIndex": 1,
+      "spareName": "Blade Mounting Piece",
+      "thresholdHours": 300,
+      "currentRunHours": 96,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 2,
+      "spareIndex": 2,
+      "spareName": "Narrow Plate",
+      "thresholdHours": 300,
+      "currentRunHours": 135,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 2,
+      "spareIndex": 3,
+      "spareName": "Curved Plate",
+      "thresholdHours": 600,
+      "currentRunHours": 348,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 2,
+      "spareIndex": 4,
+      "spareName": "Feeding End",
+      "thresholdHours": 2000,
+      "currentRunHours": 1420,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 2,
+      "spareIndex": 5,
+      "spareName": "Bearing End",
+      "thresholdHours": 2000,
+      "currentRunHours": 1680,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 2,
+      "spareIndex": 6,
+      "spareName": "Impeller",
+      "thresholdHours": 300,
+      "currentRunHours": 21,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 2,
+      "spareIndex": 7,
+      "spareName": "Wall Plate",
+      "thresholdHours": 2000,
+      "currentRunHours": 400,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 2,
+      "spareIndex": 8,
+      "spareName": "Control Gauge",
+      "thresholdHours": 300,
+      "currentRunHours": 99,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 2,
+      "spareIndex": 9,
+      "spareName": "Disc Spacer",
+      "thresholdHours": 0,
+      "currentRunHours": 866.9,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 2,
+      "spareIndex": 10,
+      "spareName": "Doom Nut 1/2in",
+      "thresholdHours": 2000,
+      "currentRunHours": 1180,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 2,
+      "spareIndex": 11,
+      "spareName": "Doom Nut 5/8",
+      "thresholdHours": 2000,
+      "currentRunHours": 1440,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 2,
+      "spareIndex": 12,
+      "spareName": "Disc",
+      "thresholdHours": 5000,
+      "currentRunHours": 4250,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 2,
+      "spareIndex": 13,
+      "spareName": "Guide Plate",
+      "thresholdHours": 600,
+      "currentRunHours": 48,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 3,
+      "spareIndex": 0,
+      "spareName": "Blade",
+      "thresholdHours": 100,
+      "currentRunHours": 112.5,
+      "triggerActive": true,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 3,
+      "spareIndex": 1,
+      "spareName": "Blade Mounting Piece",
+      "thresholdHours": 300,
+      "currentRunHours": 117,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 3,
+      "spareIndex": 2,
+      "spareName": "Narrow Plate",
+      "thresholdHours": 300,
+      "currentRunHours": 156,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 3,
+      "spareIndex": 3,
+      "spareName": "Curved Plate",
+      "thresholdHours": 600,
+      "currentRunHours": 390,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 3,
+      "spareIndex": 4,
+      "spareName": "Feeding End",
+      "thresholdHours": 2000,
+      "currentRunHours": 1560,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 3,
+      "spareIndex": 5,
+      "spareName": "Bearing End",
+      "thresholdHours": 2000,
+      "currentRunHours": 1820,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 3,
+      "spareIndex": 6,
+      "spareName": "Impeller",
+      "thresholdHours": 300,
+      "currentRunHours": 42,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 3,
+      "spareIndex": 7,
+      "spareName": "Wall Plate",
+      "thresholdHours": 2000,
+      "currentRunHours": 540,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 3,
+      "spareIndex": 8,
+      "spareName": "Control Gauge",
+      "thresholdHours": 300,
+      "currentRunHours": 120,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 3,
+      "spareIndex": 9,
+      "spareName": "Disc Spacer",
+      "thresholdHours": 0,
+      "currentRunHours": 879.2,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 3,
+      "spareIndex": 10,
+      "spareName": "Doom Nut 1/2in",
+      "thresholdHours": 2000,
+      "currentRunHours": 1320,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 3,
+      "spareIndex": 11,
+      "spareName": "Doom Nut 5/8",
+      "thresholdHours": 2000,
+      "currentRunHours": 1580,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 3,
+      "spareIndex": 12,
+      "spareName": "Disc",
+      "thresholdHours": 5000,
+      "currentRunHours": 4600,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 3,
+      "spareIndex": 13,
+      "spareName": "Guide Plate",
+      "thresholdHours": 600,
+      "currentRunHours": 90,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 4,
+      "spareIndex": 0,
+      "spareName": "Blade",
+      "thresholdHours": 100,
+      "currentRunHours": 33,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 4,
+      "spareIndex": 1,
+      "spareName": "Blade Mounting Piece",
+      "thresholdHours": 300,
+      "currentRunHours": 138,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 4,
+      "spareIndex": 2,
+      "spareName": "Narrow Plate",
+      "thresholdHours": 300,
+      "currentRunHours": 177,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 4,
+      "spareIndex": 3,
+      "spareName": "Curved Plate",
+      "thresholdHours": 600,
+      "currentRunHours": 432,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 4,
+      "spareIndex": 4,
+      "spareName": "Feeding End",
+      "thresholdHours": 2000,
+      "currentRunHours": 1700,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 4,
+      "spareIndex": 5,
+      "spareName": "Bearing End",
+      "thresholdHours": 2000,
+      "currentRunHours": 160,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 4,
+      "spareIndex": 6,
+      "spareName": "Impeller",
+      "thresholdHours": 300,
+      "currentRunHours": 63,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 4,
+      "spareIndex": 7,
+      "spareName": "Wall Plate",
+      "thresholdHours": 2000,
+      "currentRunHours": 680,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 4,
+      "spareIndex": 8,
+      "spareName": "Control Gauge",
+      "thresholdHours": 300,
+      "currentRunHours": 141,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 4,
+      "spareIndex": 9,
+      "spareName": "Disc Spacer",
+      "thresholdHours": 0,
+      "currentRunHours": 891.5,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 4,
+      "spareIndex": 10,
+      "spareName": "Doom Nut 1/2in",
+      "thresholdHours": 2000,
+      "currentRunHours": 1460,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 4,
+      "spareIndex": 11,
+      "spareName": "Doom Nut 5/8",
+      "thresholdHours": 2000,
+      "currentRunHours": 1720,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 4,
+      "spareIndex": 12,
+      "spareName": "Disc",
+      "thresholdHours": 5000,
+      "currentRunHours": 450,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 4,
+      "spareIndex": 13,
+      "spareName": "Guide Plate",
+      "thresholdHours": 600,
+      "currentRunHours": 132,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 5,
+      "spareIndex": 0,
+      "spareName": "Blade",
+      "thresholdHours": 100,
+      "currentRunHours": 40,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 5,
+      "spareIndex": 1,
+      "spareName": "Blade Mounting Piece",
+      "thresholdHours": 300,
+      "currentRunHours": 159,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 5,
+      "spareIndex": 2,
+      "spareName": "Narrow Plate",
+      "thresholdHours": 300,
+      "currentRunHours": 198,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 5,
+      "spareIndex": 3,
+      "spareName": "Curved Plate",
+      "thresholdHours": 600,
+      "currentRunHours": 474,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 5,
+      "spareIndex": 4,
+      "spareName": "Feeding End",
+      "thresholdHours": 2000,
+      "currentRunHours": 1840,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 5,
+      "spareIndex": 5,
+      "spareName": "Bearing End",
+      "thresholdHours": 2000,
+      "currentRunHours": 300,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 5,
+      "spareIndex": 6,
+      "spareName": "Impeller",
+      "thresholdHours": 300,
+      "currentRunHours": 84,
+      "triggerActive": false,
+      "lastReplacedAt": "2026-06-02T11:47:05Z",
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 5,
+      "spareIndex": 7,
+      "spareName": "Wall Plate",
+      "thresholdHours": 2000,
+      "currentRunHours": 820,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 5,
+      "spareIndex": 8,
+      "spareName": "Control Gauge",
+      "thresholdHours": 300,
+      "currentRunHours": 162,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 5,
+      "spareIndex": 9,
+      "spareName": "Disc Spacer",
+      "thresholdHours": 0,
+      "currentRunHours": 903.8,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 5,
+      "spareIndex": 10,
+      "spareName": "Doom Nut 1/2in",
+      "thresholdHours": 2000,
+      "currentRunHours": 1600,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 5,
+      "spareIndex": 11,
+      "spareName": "Doom Nut 5/8",
+      "thresholdHours": 2000,
+      "currentRunHours": 1860,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 5,
+      "spareIndex": 12,
+      "spareName": "Disc",
+      "thresholdHours": 5000,
+      "currentRunHours": 800,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 5,
+      "spareIndex": 13,
+      "spareName": "Guide Plate",
+      "thresholdHours": 600,
+      "currentRunHours": 174,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 6,
+      "spareIndex": 0,
+      "spareName": "Blade",
+      "thresholdHours": 100,
+      "currentRunHours": 47,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 6,
+      "spareIndex": 1,
+      "spareName": "Blade Mounting Piece",
+      "thresholdHours": 300,
+      "currentRunHours": 180,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 6,
+      "spareIndex": 2,
+      "spareName": "Narrow Plate",
+      "thresholdHours": 300,
+      "currentRunHours": 219,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 6,
+      "spareIndex": 3,
+      "spareName": "Curved Plate",
+      "thresholdHours": 600,
+      "currentRunHours": 516,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 6,
+      "spareIndex": 4,
+      "spareName": "Feeding End",
+      "thresholdHours": 2000,
+      "currentRunHours": 180,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 6,
+      "spareIndex": 5,
+      "spareName": "Bearing End",
+      "thresholdHours": 2000,
+      "currentRunHours": 440,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 6,
+      "spareIndex": 6,
+      "spareName": "Impeller",
+      "thresholdHours": 300,
+      "currentRunHours": 105,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 6,
+      "spareIndex": 7,
+      "spareName": "Wall Plate",
+      "thresholdHours": 2000,
+      "currentRunHours": 960,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 6,
+      "spareIndex": 8,
+      "spareName": "Control Gauge",
+      "thresholdHours": 300,
+      "currentRunHours": 183,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 6,
+      "spareIndex": 9,
+      "spareName": "Disc Spacer",
+      "thresholdHours": 0,
+      "currentRunHours": 916.1,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 6,
+      "spareIndex": 10,
+      "spareName": "Doom Nut 1/2in",
+      "thresholdHours": 2000,
+      "currentRunHours": 1740,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 6,
+      "spareIndex": 11,
+      "spareName": "Doom Nut 5/8",
+      "thresholdHours": 2000,
+      "currentRunHours": 200,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 6,
+      "spareIndex": 12,
+      "spareName": "Disc",
+      "thresholdHours": 5000,
+      "currentRunHours": 1150,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 6,
+      "spareIndex": 13,
+      "spareName": "Guide Plate",
+      "thresholdHours": 600,
+      "currentRunHours": 216,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 7,
+      "spareIndex": 0,
+      "spareName": "Blade",
+      "thresholdHours": 100,
+      "currentRunHours": 54,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 7,
+      "spareIndex": 1,
+      "spareName": "Blade Mounting Piece",
+      "thresholdHours": 300,
+      "currentRunHours": 201,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 7,
+      "spareIndex": 2,
+      "spareName": "Narrow Plate",
+      "thresholdHours": 300,
+      "currentRunHours": 240,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 7,
+      "spareIndex": 3,
+      "spareName": "Curved Plate",
+      "thresholdHours": 600,
+      "currentRunHours": 558,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 7,
+      "spareIndex": 4,
+      "spareName": "Feeding End",
+      "thresholdHours": 2000,
+      "currentRunHours": 320,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 7,
+      "spareIndex": 5,
+      "spareName": "Bearing End",
+      "thresholdHours": 2000,
+      "currentRunHours": 580,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 7,
+      "spareIndex": 6,
+      "spareName": "Impeller",
+      "thresholdHours": 300,
+      "currentRunHours": 126,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 7,
+      "spareIndex": 7,
+      "spareName": "Wall Plate",
+      "thresholdHours": 2000,
+      "currentRunHours": 1100,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 7,
+      "spareIndex": 8,
+      "spareName": "Control Gauge",
+      "thresholdHours": 300,
+      "currentRunHours": 318.2,
+      "triggerActive": true,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 7,
+      "spareIndex": 9,
+      "spareName": "Disc Spacer",
+      "thresholdHours": 0,
+      "currentRunHours": 928.4,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 7,
+      "spareIndex": 10,
+      "spareName": "Doom Nut 1/2in",
+      "thresholdHours": 2000,
+      "currentRunHours": 1880,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 7,
+      "spareIndex": 11,
+      "spareName": "Doom Nut 5/8",
+      "thresholdHours": 2000,
+      "currentRunHours": 340,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 7,
+      "spareIndex": 12,
+      "spareName": "Disc",
+      "thresholdHours": 5000,
+      "currentRunHours": 1500,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 7,
+      "spareIndex": 13,
+      "spareName": "Guide Plate",
+      "thresholdHours": 600,
+      "currentRunHours": 258,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 8,
+      "spareIndex": 0,
+      "spareName": "Blade",
+      "thresholdHours": 100,
+      "currentRunHours": 61,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 8,
+      "spareIndex": 1,
+      "spareName": "Blade Mounting Piece",
+      "thresholdHours": 300,
+      "currentRunHours": 222,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 8,
+      "spareIndex": 2,
+      "spareName": "Narrow Plate",
+      "thresholdHours": 300,
+      "currentRunHours": 261,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 8,
+      "spareIndex": 3,
+      "spareName": "Curved Plate",
+      "thresholdHours": 600,
+      "currentRunHours": 60,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 8,
+      "spareIndex": 4,
+      "spareName": "Feeding End",
+      "thresholdHours": 2000,
+      "currentRunHours": 460,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 8,
+      "spareIndex": 5,
+      "spareName": "Bearing End",
+      "thresholdHours": 2000,
+      "currentRunHours": 720,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 8,
+      "spareIndex": 6,
+      "spareName": "Impeller",
+      "thresholdHours": 300,
+      "currentRunHours": 147,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 8,
+      "spareIndex": 7,
+      "spareName": "Wall Plate",
+      "thresholdHours": 2000,
+      "currentRunHours": 1240,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 8,
+      "spareIndex": 8,
+      "spareName": "Control Gauge",
+      "thresholdHours": 300,
+      "currentRunHours": 225,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 8,
+      "spareIndex": 9,
+      "spareName": "Disc Spacer",
+      "thresholdHours": 0,
+      "currentRunHours": 940.7,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 8,
+      "spareIndex": 10,
+      "spareName": "Doom Nut 1/2in",
+      "thresholdHours": 2000,
+      "currentRunHours": 220,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 8,
+      "spareIndex": 11,
+      "spareName": "Doom Nut 5/8",
+      "thresholdHours": 2000,
+      "currentRunHours": 480,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 8,
+      "spareIndex": 12,
+      "spareName": "Disc",
+      "thresholdHours": 5000,
+      "currentRunHours": 1850,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 8,
+      "spareIndex": 13,
+      "spareName": "Guide Plate",
+      "thresholdHours": 600,
+      "currentRunHours": 300,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 9,
+      "spareIndex": 0,
+      "spareName": "Blade",
+      "thresholdHours": 100,
+      "currentRunHours": 68,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 9,
+      "spareIndex": 1,
+      "spareName": "Blade Mounting Piece",
+      "thresholdHours": 300,
+      "currentRunHours": 243,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 9,
+      "spareIndex": 2,
+      "spareName": "Narrow Plate",
+      "thresholdHours": 300,
+      "currentRunHours": 282,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 9,
+      "spareIndex": 3,
+      "spareName": "Curved Plate",
+      "thresholdHours": 600,
+      "currentRunHours": 102,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 9,
+      "spareIndex": 4,
+      "spareName": "Feeding End",
+      "thresholdHours": 2000,
+      "currentRunHours": 600,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 9,
+      "spareIndex": 5,
+      "spareName": "Bearing End",
+      "thresholdHours": 2000,
+      "currentRunHours": 860,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 9,
+      "spareIndex": 6,
+      "spareName": "Impeller",
+      "thresholdHours": 300,
+      "currentRunHours": 168,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 9,
+      "spareIndex": 7,
+      "spareName": "Wall Plate",
+      "thresholdHours": 2000,
+      "currentRunHours": 1380,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 9,
+      "spareIndex": 8,
+      "spareName": "Control Gauge",
+      "thresholdHours": 300,
+      "currentRunHours": 246,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 9,
+      "spareIndex": 9,
+      "spareName": "Disc Spacer",
+      "thresholdHours": 0,
+      "currentRunHours": 953,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 9,
+      "spareIndex": 10,
+      "spareName": "Doom Nut 1/2in",
+      "thresholdHours": 2000,
+      "currentRunHours": 360,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 9,
+      "spareIndex": 11,
+      "spareName": "Doom Nut 5/8",
+      "thresholdHours": 2000,
+      "currentRunHours": 620,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 9,
+      "spareIndex": 12,
+      "spareName": "Disc",
+      "thresholdHours": 5000,
+      "currentRunHours": 2200,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 9,
+      "spareIndex": 13,
+      "spareName": "Guide Plate",
+      "thresholdHours": 600,
+      "currentRunHours": 342,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 10,
+      "spareIndex": 0,
+      "spareName": "Blade",
+      "thresholdHours": 100,
+      "currentRunHours": 75,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 10,
+      "spareIndex": 1,
+      "spareName": "Blade Mounting Piece",
+      "thresholdHours": 300,
+      "currentRunHours": 264,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 10,
+      "spareIndex": 2,
+      "spareName": "Narrow Plate",
+      "thresholdHours": 300,
+      "currentRunHours": 33,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 10,
+      "spareIndex": 3,
+      "spareName": "Curved Plate",
+      "thresholdHours": 600,
+      "currentRunHours": 144,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 10,
+      "spareIndex": 4,
+      "spareName": "Feeding End",
+      "thresholdHours": 2000,
+      "currentRunHours": 740,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 10,
+      "spareIndex": 5,
+      "spareName": "Bearing End",
+      "thresholdHours": 2000,
+      "currentRunHours": 1000,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 10,
+      "spareIndex": 6,
+      "spareName": "Impeller",
+      "thresholdHours": 300,
+      "currentRunHours": 189,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 10,
+      "spareIndex": 7,
+      "spareName": "Wall Plate",
+      "thresholdHours": 2000,
+      "currentRunHours": 1520,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 10,
+      "spareIndex": 8,
+      "spareName": "Control Gauge",
+      "thresholdHours": 300,
+      "currentRunHours": 267,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 10,
+      "spareIndex": 9,
+      "spareName": "Disc Spacer",
+      "thresholdHours": 0,
+      "currentRunHours": 965.3,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 10,
+      "spareIndex": 10,
+      "spareName": "Doom Nut 1/2in",
+      "thresholdHours": 2000,
+      "currentRunHours": 500,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 10,
+      "spareIndex": 11,
+      "spareName": "Doom Nut 5/8",
+      "thresholdHours": 2000,
+      "currentRunHours": 760,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 10,
+      "spareIndex": 12,
+      "spareName": "Disc",
+      "thresholdHours": 5000,
+      "currentRunHours": 2550,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 10,
+      "spareIndex": 13,
+      "spareName": "Guide Plate",
+      "thresholdHours": 600,
+      "currentRunHours": 384,
+      "triggerActive": false,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    }
+  ],
+  "spareAlerts": [
+    {
+      "impellerNum": 3,
+      "spareIndex": 0,
+      "spareName": "Blade",
+      "thresholdHours": 100,
+      "currentRunHours": 112.5,
+      "triggerActive": true,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    },
+    {
+      "impellerNum": 7,
+      "spareIndex": 8,
+      "spareName": "Control Gauge",
+      "thresholdHours": 300,
+      "currentRunHours": 318.2,
+      "triggerActive": true,
+      "lastReplacedAt": null,
+      "lastUpdatedAt": "2026-07-11T06:42:10.881Z"
+    }
+  ],
+  "section2": {
+    "requestId": 42,
+    "filterBy": "time",
+    "filterStart": "2026-07-10T18:30:00Z",
+    "filterEnd": "2026-07-11T06:40:00Z",
+    "periodLabel": "today",
+    "filterCycleFrom": null,
+    "filterCycleTo": null,
+    "filterMetalName": null,
+    "processedAt": "2026-07-11T06:40:07.664Z",
+    "results": [
+      {
+        "parameterName": "blast_time_sec",
+        "value": "9642.5"
+      },
+      {
+        "parameterName": "cycle_count",
+        "value": "3"
+      },
+      {
+        "parameterName": "energy_kwh_total",
+        "value": "38.412"
+      },
+      {
+        "parameterName": "energy_per_casting_kwh_kg",
+        "value": "0.0405"
+      },
+      {
+        "parameterName": "machine_utility_pct",
+        "value": "58.90"
+      }
+    ],
+    "cycles": [
+      {
+        "cycleNumber": 1282,
+        "blastStart": "2026-07-10T19:12:04Z",
+        "blastEnd": "2026-07-10T20:03:47Z",
+        "metal1Name": "Grey Iron",
+        "metal1WeightKg": 240,
+        "metal2Name": "SG Iron",
+        "metal2WeightKg": 105.5,
+        "metal3Name": null,
+        "metal3WeightKg": null,
+        "metal4Name": null,
+        "metal4WeightKg": null,
+        "productionKg": 345.5,
+        "energyKwh": 13.208,
+        "shotsUsage": 0.0641
+      },
+      {
+        "cycleNumber": 1283,
+        "blastStart": "2026-07-11T02:20:11Z",
+        "blastEnd": "2026-07-11T03:05:58Z",
+        "metal1Name": "Grey Iron",
+        "metal1WeightKg": 310,
+        "metal2Name": null,
+        "metal2WeightKg": null,
+        "metal3Name": null,
+        "metal3WeightKg": null,
+        "metal4Name": null,
+        "metal4WeightKg": null,
+        "productionKg": 310,
+        "energyKwh": 12.554,
+        "shotsUsage": 0.0587
+      },
+      {
+        "cycleNumber": 1284,
+        "blastStart": "2026-07-11T05:12:33Z",
+        "blastEnd": "2026-07-11T05:58:03Z",
+        "metal1Name": null,
+        "metal1WeightKg": null,
+        "metal2Name": null,
+        "metal2WeightKg": null,
+        "metal3Name": null,
+        "metal3WeightKg": null,
+        "metal4Name": null,
+        "metal4WeightKg": null,
+        "productionKg": 293,
+        "energyKwh": 12.65,
+        "shotsUsage": 0.0712
+      }
+    ],
+    "shotsBreakdown": [
+      {
+        "refillTimestamp": "2026-07-10T19:26:51Z",
+        "blastCount": 9
+      },
+      {
+        "refillTimestamp": "2026-07-11T02:11:09Z",
+        "blastCount": 7
+      }
+    ]
+  }
+}

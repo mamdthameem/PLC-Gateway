@@ -9,4 +9,5 @@ public interface IFilterService
     Task<List<FilterResultDto>> GetResultsAsync(int requestId);
     Task<List<FilteredCycleDto>> GetCycleDataAsync(int requestId);
     Task<List<ShotsBreakdownDto>> GetShotsBreakdownAsync(int requestId);
+    Task<FilteredRequestInfoDto?> GetLatestCompletedAsync();
 }

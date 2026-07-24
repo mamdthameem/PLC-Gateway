@@ -1,58 +1,188 @@
 using Microsoft.AspNetCore.Mvc;
 using Npgsql;
+using PlcApi.Models;
+using PlcApi.Services;
 
 namespace PlcApi.Controllers;
 
 // Cloud pull endpoints (Part E4). Not JWT-protected — access is gated by AdminGuardMiddleware
 // (IP allowlist + X-Api-Key). Reads local PostgreSQL only; returns JSON.
+//
+// /live mirrors the FULL local dashboard by reusing the same API services the dashboard binds
+// to (single source of truth — the cloud must never recompute). Response contract:
+// CONTRACT-admin-api.md at the repo root; keep it in sync with any change here.
 [ApiController]
 [Route("api/admin")]
 public class AdminController : ControllerBase
 {
     private readonly string _connectionString;
     private readonly ILogger<AdminController> _logger;
+    private readonly IMachineStatusService _machineStatus;
+    private readonly ILifetimeService _lifetime;
+    private readonly IShotsBreakdownService _shots;
+    private readonly IAmpsService _amps;
+    private readonly ISpareStatusService _spares;
+    private readonly IFilterService _filter;
 
-    public AdminController(IConfiguration config, ILogger<AdminController> logger)
+    public AdminController(
+        IConfiguration config,
+        ILogger<AdminController> logger,
+        IMachineStatusService machineStatus,
+        ILifetimeService lifetime,
+        IShotsBreakdownService shots,
+        IAmpsService amps,
+        ISpareStatusService spares,
+        IFilterService filter)
     {
         _connectionString = config.GetValue<string>("PostgreSQL:ConnectionString")
             ?? config.GetConnectionString("PostgresDb")
             ?? throw new InvalidOperationException("Connection string is required.");
         _logger = logger;
+        _machineStatus = machineStatus;
+        _lifetime = lifetime;
+        _shots = shots;
+        _amps = amps;
+        _spares = spares;
+        _filter = filter;
     }
 
-    // Live snapshot: PLC link state, lifetime parameters, and active spare alerts.
+    // DB timestamps are wall-clock local time (TIMESTAMP without tz, written via DateTime.Now).
+    // The admin API emits UTC ISO 8601, so convert on the way out; a value already marked Utc
+    // (DTO fallbacks use DateTime.UtcNow) must not be shifted twice.
+    private static DateTime ToUtc(DateTime ts) =>
+        ts.Kind == DateTimeKind.Utc ? ts : DateTime.SpecifyKind(ts, DateTimeKind.Local).ToUniversalTime();
+
+    private static DateTime? ToUtc(DateTime? ts) => ts.HasValue ? ToUtc(ts.Value) : null;
+
+    private static object ToSpareJson(SpareStatusDto s) => new
+    {
+        impellerNum     = s.ImpellerNum,
+        spareIndex      = s.SpareIndex,
+        spareName       = s.SpareName,
+        thresholdHours  = s.ThresholdHours,
+        currentRunHours = s.CurrentRunHours,
+        triggerActive   = s.TriggerActive,
+        lastReplacedAt  = ToUtc(s.LastReplacedAt),
+        lastUpdatedAt   = ToUtc(s.LastUpdatedAt)
+    };
+
+    // Live snapshot: everything the local Section 1 dashboard renders, plus the latest
+    // completed Section 2 (filtered) view. All values are the dashboard services' outputs.
     [HttpGet("live")]
     public async Task<IActionResult> Live()
     {
         try
         {
-            await using var conn = new NpgsqlConnection(_connectionString);
-            await conn.OpenAsync();
-
+            // PLC link state (gateway_status row — includes changed_at, which the tile DTO lacks)
             bool plcConnected = false; DateTime? lastScan = null, changedAt = null;
-            await using (var cmd = new NpgsqlCommand("SELECT plc_connected, last_scan_at, changed_at FROM gateway_status WHERE id = 1", conn))
-            await using (var r = await cmd.ExecuteReaderAsync())
+            await using (var conn = new NpgsqlConnection(_connectionString))
+            {
+                await conn.OpenAsync();
+                await using var cmd = new NpgsqlCommand(
+                    "SELECT plc_connected, last_scan_at, changed_at FROM gateway_status WHERE id = 1", conn);
+                await using var r = await cmd.ExecuteReaderAsync();
                 if (await r.ReadAsync())
                 {
                     plcConnected = r.GetBoolean(0);
                     lastScan  = r.IsDBNull(1) ? null : r.GetDateTime(1);
                     changedAt = r.IsDBNull(2) ? null : r.GetDateTime(2);
                 }
+            }
 
-            var lifetime = new List<object>();
-            await using (var cmd = new NpgsqlCommand("SELECT parameter_name, value, updated_at FROM plc_lifetime_parameters ORDER BY parameter_name", conn))
-            await using (var r = await cmd.ExecuteReaderAsync())
-                while (await r.ReadAsync())
-                    lifetime.Add(new { parameter = r.GetString(0), value = r.IsDBNull(1) ? null : (decimal?)r.GetDecimal(1), updatedAt = r.GetDateTime(2) });
+            // Same service outputs the dashboard panels bind to.
+            var status    = await _machineStatus.GetStatusAsync();
+            var lifetime  = await _lifetime.GetAllAsync();
+            var shots     = await _shots.GetAllAsync();
+            var amps      = await _amps.GetImpellerAmpsAsync();
+            var spareGrid = await _spares.GetAllAsync();
+            var alerts    = await _spares.GetAlertsAsync();
 
-            var alerts = new List<object>();
-            await using (var cmd = new NpgsqlCommand(
-                "SELECT impeller_num, spare_index, spare_name, current_run_hours, threshold_hours FROM plc_spare_status WHERE trigger_active = TRUE AND threshold_hours > 0 ORDER BY impeller_num, spare_index", conn))
-            await using (var r = await cmd.ExecuteReaderAsync())
-                while (await r.ReadAsync())
-                    alerts.Add(new { impeller = r.GetInt32(0), spareIndex = r.GetInt32(1), spareName = r.GetString(2), runHours = r.GetDecimal(3), thresholdHours = r.GetDecimal(4) });
+            // Latest completed Section 2 request, mirrored with the same read paths the
+            // dashboard's FilterResultsView uses. Null until the first filter completes.
+            object? section2 = null;
+            var latest = await _filter.GetLatestCompletedAsync();
+            if (latest is not null)
+            {
+                var results     = await _filter.GetResultsAsync(latest.RequestId);
+                var cycles      = await _filter.GetCycleDataAsync(latest.RequestId);
+                var filterShots = await _filter.GetShotsBreakdownAsync(latest.RequestId);
 
-            return Ok(new { plcConnected, lastScanAt = lastScan, changedAt, lifetime, spareAlerts = alerts });
+                section2 = new
+                {
+                    requestId       = latest.RequestId,
+                    filterBy        = latest.FilterBy,
+                    filterStart     = ToUtc(latest.FilterStart),
+                    filterEnd       = ToUtc(latest.FilterEnd),
+                    periodLabel     = latest.PeriodLabel,
+                    filterCycleFrom = latest.FilterCycleFrom,
+                    filterCycleTo   = latest.FilterCycleTo,
+                    filterMetalName = latest.FilterMetalName,
+                    processedAt     = ToUtc(latest.ProcessedAt),
+                    results = results.Select(p => new
+                    {
+                        parameterName = p.ParameterName,
+                        value         = p.Value
+                    }),
+                    cycles = cycles.Select(c => new
+                    {
+                        cycleNumber    = c.CycleNumber,
+                        blastStart     = ToUtc(c.BlastStart),
+                        blastEnd       = ToUtc(c.BlastEnd),
+                        metal1Name     = c.Metal1Name,
+                        metal1WeightKg = c.Metal1WeightKg,
+                        metal2Name     = c.Metal2Name,
+                        metal2WeightKg = c.Metal2WeightKg,
+                        metal3Name     = c.Metal3Name,
+                        metal3WeightKg = c.Metal3WeightKg,
+                        metal4Name     = c.Metal4Name,
+                        metal4WeightKg = c.Metal4WeightKg,
+                        productionKg   = c.ProductionKg,
+                        energyKwh      = c.EnergyKwh,
+                        shotsUsage     = c.ShotsUsage
+                    }),
+                    shotsBreakdown = filterShots.Select(s => new
+                    {
+                        refillTimestamp = ToUtc(s.RefillTimestamp),
+                        blastCount      = s.BlastCount
+                    })
+                };
+            }
+
+            return Ok(new
+            {
+                generatedAtUtc = DateTime.UtcNow,
+                plcConnected,
+                lastScanAt = ToUtc(lastScan),
+                changedAt  = ToUtc(changedAt),
+                machineStatus = status is null ? null : new
+                {
+                    value       = status.Value,
+                    // Same rule the local tile applies: any non-"0" byte means running.
+                    running     = status.Value != "0",
+                    isStale     = status.IsStale,
+                    lastUpdated = ToUtc(status.LastUpdated)
+                },
+                lifetime = lifetime.Select(p => new
+                {
+                    parameterName = p.ParameterName,
+                    value         = p.Value,
+                    updatedAt     = ToUtc(p.UpdatedAt)
+                }),
+                shotsBreakdown = shots.Select(s => new
+                {
+                    refillTimestamp = ToUtc(s.RefillTimestamp),
+                    blastCount      = s.BlastCount
+                }),
+                amps = amps.Select(a => new
+                {
+                    parameterName = a.ParameterName,
+                    value         = a.Value,
+                    lastUpdated   = ToUtc(a.LastUpdated)
+                }),
+                spareGrid   = spareGrid.Select(ToSpareJson),
+                spareAlerts = alerts.Select(ToSpareJson),
+                section2
+            });
         }
         catch (Exception ex)
         {

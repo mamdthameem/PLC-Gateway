@@ -168,6 +168,45 @@ public class FilterService : IFilterService
         return results;
     }
 
+    public async Task<FilteredRequestInfoDto?> GetLatestCompletedAsync()
+    {
+        try
+        {
+            await using var conn = new NpgsqlConnection(_connectionString);
+            await conn.OpenAsync();
+
+            const string sql = @"
+                SELECT id, filter_by, filter_start, filter_end, period_label,
+                       filter_cycle_from, filter_cycle_to, filter_metal_name, processed_at
+                FROM calculation_requests
+                WHERE status = 'done'
+                ORDER BY id DESC
+                LIMIT 1;";
+
+            await using var cmd = new NpgsqlCommand(sql, conn);
+            await using var reader = await cmd.ExecuteReaderAsync();
+
+            if (!await reader.ReadAsync()) return null;
+            return new FilteredRequestInfoDto
+            {
+                RequestId       = reader.GetInt32(0),
+                FilterBy        = reader.GetString(1),
+                FilterStart     = reader.GetDateTime(2),
+                FilterEnd       = reader.GetDateTime(3),
+                PeriodLabel     = reader.IsDBNull(4) ? null : reader.GetString(4),
+                FilterCycleFrom = reader.IsDBNull(5) ? null : reader.GetInt32(5),
+                FilterCycleTo   = reader.IsDBNull(6) ? null : reader.GetInt32(6),
+                FilterMetalName = reader.IsDBNull(7) ? null : reader.GetString(7),
+                ProcessedAt     = reader.IsDBNull(8) ? null : reader.GetDateTime(8)
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to read latest completed calculation_request");
+            throw;
+        }
+    }
+
     public async Task<List<ShotsBreakdownDto>> GetShotsBreakdownAsync(int requestId)
     {
         var results = new List<ShotsBreakdownDto>();
