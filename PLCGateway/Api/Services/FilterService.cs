@@ -168,6 +168,43 @@ public class FilterService : IFilterService
         return results;
     }
 
+    // Section 2 production broken down by casting metal (summed declared weights).
+    // Largest contributor first so the dominant metal reads at the top of the table.
+    public async Task<List<FilteredMetalProductionDto>> GetMetalProductionAsync(int requestId)
+    {
+        var results = new List<FilteredMetalProductionDto>();
+        try
+        {
+            await using var conn = new NpgsqlConnection(_connectionString);
+            await conn.OpenAsync();
+
+            const string sql = @"
+                SELECT metal_name, production_kg
+                FROM plc_filtered_metal_production
+                WHERE request_id = @id
+                ORDER BY production_kg DESC, metal_name ASC;";
+
+            await using var cmd = new NpgsqlCommand(sql, conn);
+            cmd.Parameters.AddWithValue("id", requestId);
+            await using var reader = await cmd.ExecuteReaderAsync();
+
+            while (await reader.ReadAsync())
+            {
+                results.Add(new FilteredMetalProductionDto
+                {
+                    MetalName    = reader.GetString(0),
+                    ProductionKg = reader.IsDBNull(1) ? 0 : Convert.ToDouble(reader.GetValue(1))
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to read metal production for request {Id}", requestId);
+            throw;
+        }
+        return results;
+    }
+
     public async Task<FilteredRequestInfoDto?> GetLatestCompletedAsync()
     {
         try

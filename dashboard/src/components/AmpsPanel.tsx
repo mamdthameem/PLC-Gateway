@@ -7,6 +7,7 @@ import BarChartIcon from '@mui/icons-material/BarChart';
 import CloseIcon from '@mui/icons-material/Close';
 import { fetchAmpReadings } from '../services/ampsService';
 import AmpsGraph from './AmpsGraph';
+import { usePlcConnection } from '../utils/usePlcConnection';
 import type { AmpReading } from '../types';
 
 const POLL_MS = 1000;
@@ -26,6 +27,12 @@ export default function AmpsPanel() {
   const [error, setError]         = useState<string | null>(null);
   const [loading, setLoading]     = useState(true);
   const [openImp, setOpenImp]     = useState<number | null>(null);
+  const { connected, lastScanAt } = usePlcConnection();
+
+  // See ExpandableMetricCard: a Recharts ResponsiveContainer mounted mid-dialog-transition can
+  // measure zero width and render an empty box, so wait until the dialog has finished opening.
+  const [chartReady, setChartReady] = useState(false);
+  const closeDialog = () => { setOpenImp(null); setChartReady(false); };
 
   useEffect(() => {
     let active = true;
@@ -49,7 +56,14 @@ export default function AmpsPanel() {
 
   return (
     <Box>
-      <Typography variant="h6" mb={2}>Live Impeller Current (A)</Typography>
+      <Typography variant="h6" mb={connected ? 2 : 0.5}>Live Impeller Current (A)</Typography>
+
+      {!connected && (
+        <Alert severity="warning" sx={{ mb: 2, py: 0.25 }}>
+          PLC disconnected — showing the last values read
+          {lastScanAt ? ` at ${new Date(lastScanAt).toLocaleString()}` : ''}. These are not live.
+        </Alert>
+      )}
 
       <Grid container spacing={2}>
         {readings.map(r => {
@@ -58,9 +72,19 @@ export default function AmpsPanel() {
           const impNum  = impellerNumber(r.parameterName);
           return (
             <Grid key={r.parameterName} size={{ xs: 6, sm: 4, md: 2 }}>
+              {/* The whole tile opens the history chart, matching ExpandableMetricCard — the
+                  icon alone was too small a target and gave no hint the card was clickable. */}
               <Paper
                 variant="outlined"
-                sx={{ p: 1.5, borderRadius: 2, position: 'relative' }}
+                onClick={() => setOpenImp(impNum)}
+                sx={{
+                  p: 1.5,
+                  borderRadius: 2,
+                  position: 'relative',
+                  cursor: 'pointer',
+                  transition: 'box-shadow 0.15s',
+                  '&:hover': { boxShadow: 4 },
+                }}
               >
                 <Box display="flex" alignItems="center" justifyContent="space-between">
                   <Typography
@@ -71,13 +95,7 @@ export default function AmpsPanel() {
                     {impellerLabel(r.parameterName)}
                   </Typography>
                   <Tooltip title="View history">
-                    <IconButton
-                      size="small"
-                      sx={{ p: 0.25 }}
-                      onClick={() => setOpenImp(impNum)}
-                    >
-                      <BarChartIcon sx={{ fontSize: '0.9rem' }} />
-                    </IconButton>
+                    <BarChartIcon sx={{ fontSize: '0.9rem', color: 'text.disabled' }} />
                   </Tooltip>
                 </Box>
                 <Typography
@@ -95,13 +113,25 @@ export default function AmpsPanel() {
         })}
       </Grid>
 
-      <Dialog open={openImp !== null} onClose={() => setOpenImp(null)} maxWidth="md" fullWidth>
+      <Dialog
+        open={openImp !== null}
+        onClose={closeDialog}
+        maxWidth="md"
+        fullWidth
+        slotProps={{ transition: { onEntered: () => setChartReady(true) } }}
+      >
         <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           Impeller {openImp} — Current (A) · Last Blast Cycle
-          <IconButton onClick={() => setOpenImp(null)} size="small"><CloseIcon /></IconButton>
+          <IconButton onClick={closeDialog} size="small"><CloseIcon /></IconButton>
         </DialogTitle>
         <DialogContent>
-          {openImp !== null && <AmpsGraph impellerNumber={openImp} />}
+          {openImp !== null && chartReady ? (
+            <AmpsGraph impellerNumber={openImp} />
+          ) : (
+            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 300 }}>
+              <CircularProgress />
+            </Box>
+          )}
         </DialogContent>
       </Dialog>
     </Box>

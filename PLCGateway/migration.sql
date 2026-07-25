@@ -32,8 +32,9 @@ CREATE TABLE IF NOT EXISTS plc_historical_data (
     previous_value  TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_historical_name_time
-    ON plc_historical_data (parameter_name, timestamp);
+-- NOTE: the (parameter_name, timestamp) index for this table is created further down as
+-- idx_historical_name_num (same key columns, INCLUDE (value_num)). A second index on the
+-- identical key would only double insert cost on the hottest write path — see the DROP below.
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- SECTION 1: Lifetime cumulative parameters — one row per parameter
@@ -209,6 +210,14 @@ UPDATE plc_historical_data SET value_num = trim(value)::numeric
 CREATE INDEX IF NOT EXISTS idx_historical_name_num
     ON plc_historical_data (parameter_name, timestamp) INCLUDE (value_num);
 
+-- Drop the older duplicate: idx_historical_name_time had the identical key columns
+-- (parameter_name, timestamp), so idx_historical_name_num above can serve every query that
+-- index served (INCLUDE columns only add leaf-page payload, the key ordering is the same).
+-- plc_historical_data is the hottest write path in the system — during a blast the scan loop
+-- appends 10 impeller-current rows per second — so carrying two identical-key indexes cost a
+-- third of the index write work on every insert for no read benefit.
+DROP INDEX IF EXISTS idx_historical_name_time;
+
 -- ─────────────────────────────────────────────────────────────────────────────
 -- PER-CYCLE PRODUCTION + ENERGY (Part C2): stored once at cycle close so windowed
 -- production can be broken down by casting metal and lifetime energy is a simple SUM
@@ -294,8 +303,50 @@ CREATE TABLE IF NOT EXISTS plc_aggregation_state (
 INSERT INTO plc_aggregation_state (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- SECTION 2 PER-METAL PRODUCTION (Part D3): one row per casting metal per request,
--- production split proportionally by declared metal weight within each cycle.
+-- DAILY TREND ROLLUP: one row per calendar day, maintained incrementally by
+-- AggregationService (see DatabaseService.UpsertDailyTrendsAsync).
+--
+-- Why this exists: the Section 1 dashboard graphs are all-time. Reading them from
+-- plc_historical_data would mean shipping every raw row to the browser and computing there —
+-- with 60 s heartbeats on 'Blast ON/OFF' and 'Machine status' that is ~1.05 M rows/year for
+-- those two tags alone. This table collapses that to 365 rows/year, so a graph open costs the
+-- same in year ten as on day one.
+--
+-- This is a DERIVED rollup, not history: it can be rebuilt from plc_historical_data at any
+-- time (run the app with --rebuild-aggregation). It never replaces or removes raw data —
+-- plc_historical_data remains the untouched source of truth and is still never deleted.
+--
+-- Segment accounting (both rules were driven by real data, do not simplify them away):
+--   * An "on" segment is SPLIT at day boundaries; each day is credited only its own slice.
+--     Crediting the whole segment to its start day let one segment report 28 days of runtime
+--     inside a single calendar day.
+--   * A segment longer than ~5 minutes is treated as a RECORDING GAP, not runtime, and only its
+--     first 5 minutes count. The 60 s heartbeat guarantees closer spacing whenever the gateway is
+--     actually scanning, so a larger gap means the gateway was down — counting it as "machine on"
+--     inflated totals and could push blast_on above machine_on (utility over 100%).
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS plc_daily_trends (
+    day             DATE      PRIMARY KEY,
+    machine_on_sec  NUMERIC   NOT NULL DEFAULT 0,
+    blast_on_sec    NUMERIC   NOT NULL DEFAULT 0,
+    cycle_count     INTEGER   NOT NULL DEFAULT 0,
+    production_kg   NUMERIC   NOT NULL DEFAULT 0,
+    energy_kwh      NUMERIC   NOT NULL DEFAULT 0,
+    -- Last Tonnage reading of the day (the PLC's running accumulator). NULL when the day has
+    -- no reading at all; the read path carries the previous day's value forward.
+    tonnage_end     NUMERIC,
+    updated_at      TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- No backfill statement here on purpose: the app backfills on startup when this table is
+-- empty, so the rollup SQL lives in exactly one place (DatabaseService) instead of being
+-- duplicated between C# and this migration.
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- SECTION 2 PER-METAL PRODUCTION (Part D3): one row per casting metal per request.
+-- production_kg holds the SUM OF DECLARED CASTING-METAL WEIGHTS for that metal across the
+-- cycles in scope — it is not a split of the Tonnage accumulator. Section 1 production comes
+-- from Tonnage; Section 2 production is reported per declared casting metal. See README.
 -- ─────────────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS plc_filtered_metal_production (
     id             SERIAL   PRIMARY KEY,

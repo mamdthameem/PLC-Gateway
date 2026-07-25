@@ -10,10 +10,16 @@ export interface User {
   role: UserRole;
 }
 
-// Live machine status (plc_current_values WHERE address = 'DB60.DBB0')
+// Live machine status (plc_current_values WHERE address = 'DB60.DBB0') joined with the
+// gateway's PLC link state. While the PLC is disconnected the backend forces `value` to '0'
+// (machine treated as OFF) and flags the row stale, so the tile reports "Stopped" and can say
+// why.
 export interface MachineStatus {
   value: string;
   lastUpdated: string;
+  isStale: boolean;
+  plcConnected: boolean;
+  lastScanAt: string | null;
 }
 
 // Section 1 — plc_lifetime_parameters
@@ -54,6 +60,25 @@ export interface HistoricalPoint {
   timestamp: string;
 }
 
+// One pre-aggregated trend bucket (plc_daily_trends, via /api/trends). Backs the all-time
+// Section 1 graphs. Every derived figure is computed server-side — the dashboard plots these
+// values as delivered and never recomputes them.
+export interface DailyTrend {
+  day: string;
+  machineOnSec: number;
+  blastOnSec: number;
+  utilityPct: number;
+  cycleCount: number;
+  productionKg: number;
+  tonnageEnd: number | null;
+  energyKwh: number;
+  efficiencyKwhPerKg: number;
+}
+
+// 'hour' is computed live from Tier 2 over a bounded window (Section 2 short filters);
+// 'day'/'month' are served from the plc_daily_trends rollup and are safe for all-time ranges.
+export type TrendBucket = 'hour' | 'day' | 'month';
+
 // Latest blast cycle (plc_cycles)
 export interface LatestCycle {
   blastStart: string;
@@ -79,6 +104,13 @@ export interface FilterStatus {
 export interface FilterResult {
   parameterName: string;
   value: string;
+}
+
+// Section 2 — plc_filtered_metal_production. productionKg is the sum of DECLARED casting-metal
+// weights for that metal over the filtered scope, not a share of the Tonnage accumulator.
+export interface FilteredMetalProduction {
+  metalName: string;
+  productionKg: number;
 }
 
 export interface FilteredCycle {

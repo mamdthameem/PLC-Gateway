@@ -228,12 +228,18 @@ public class CalculationService
             foreach (var kv in windowParams)
                 await _db.InsertFilteredParameterAsync(requestId, kv.Key, kv.Value);
 
-            // Production + energy come straight from the values stored per cycle at close.
-            double productionKg = cycles.Sum(c => c.ProductionKg ?? 0);
-            double totalKwh     = cycles.Sum(c => c.EnergyKwh ?? 0);
+            // Energy comes straight from the value stored per cycle at close.
+            double totalKwh = cycles.Sum(c => c.EnergyKwh ?? 0);
             await _db.InsertFilteredParameterAsync(requestId, "energy_kwh_total", (decimal)Math.Round(totalKwh, 3));
 
-            double energyPerCasting = productionKg > 0 ? totalKwh / productionKg : 0;
+            // Section 2 reports production per declared casting metal, not from the Tonnage
+            // accumulator (that is Section 1's job). The energy-per-casting denominator therefore
+            // uses the same declared-weight total, so "per casting kg" means the same thing as the
+            // per-metal table shown next to it.
+            var metalTotals  = SumDeclaredMetalWeights(cycles);
+            double declaredKg = metalTotals.Values.Sum();
+
+            double energyPerCasting = declaredKg > 0 ? totalKwh / declaredKg : 0;
             await _db.InsertFilteredParameterAsync(requestId, "energy_per_casting_kwh_kg", (decimal)Math.Round(energyPerCasting, 4));
 
             // Shots breakdown table for the window.
@@ -241,11 +247,12 @@ public class CalculationService
             foreach (var (ts, count) in breakdown)
                 await _db.InsertFilteredShotsBreakdownAsync(requestId, ts, count);
 
-            // Per-cycle breakdown + per-metal production split.
+            // Per-cycle breakdown + per-metal declared-weight totals.
             if (cycles.Count > 0)
             {
                 await ComputePerCycleDataAsync(requestId, cycles);
-                await ComputeMetalProductionAsync(requestId, cycles);
+                foreach (var kv in metalTotals)
+                    await _db.InsertFilteredMetalProductionAsync(requestId, kv.Key, (decimal)Math.Round(kv.Value, 2));
             }
 
             _logger.LogDebug("Filtered parameters stored for request {id} ({n} cycles)", requestId, cycles.Count);
@@ -299,17 +306,23 @@ public class CalculationService
         }
     }
 
-    // Per-metal production: each cycle's production is split across its declared casting metals
-    // proportionally by declared weight. Cycles with no declared weight go to 'unspecified'.
-    private async Task ComputeMetalProductionAsync(int requestId, List<PlcCycle> cycles)
+    // Section 2 production per casting metal: the SUM OF DECLARED WEIGHTS for each metal name
+    // across the in-scope cycles. This is what the plant declared it cast, grouped by metal —
+    // it is not derived from the Tonnage accumulator at all.
+    //
+    // Consequence worth knowing: this total need not equal the measured Tonnage delta for the
+    // same window (declared vs actual). Section 1's production_qty_kg remains the raw Tonnage
+    // accumulator, so the two sections answer deliberately different questions.
+    //
+    // A slot only contributes when it carries a weight > 0. A weight declared with a blank name
+    // is attributed to 'unspecified'; a cycle that declared nothing contributes nothing rather
+    // than inventing a figure for it.
+    private static Dictionary<string, double> SumDeclaredMetalWeights(List<PlcCycle> cycles)
     {
         var byMetal = new Dictionary<string, double>(StringComparer.Ordinal);
 
         foreach (var cycle in cycles)
         {
-            double production = cycle.ProductionKg ?? 0;
-            if (production <= 0) continue;
-
             var slots = new (string? Name, double Weight)[]
             {
                 (cycle.Metal1Name, cycle.Metal1WeightKg ?? 0),
@@ -318,24 +331,15 @@ public class CalculationService
                 (cycle.Metal4Name, cycle.Metal4WeightKg ?? 0),
             };
 
-            double totalWeight = slots.Where(s => s.Weight > 0).Sum(s => s.Weight);
-
-            if (totalWeight <= 0)
-            {
-                Accumulate(byMetal, "unspecified", production);
-                continue;
-            }
-
             foreach (var slot in slots)
             {
                 if (slot.Weight <= 0) continue;
                 string name = string.IsNullOrWhiteSpace(slot.Name) ? "unspecified" : slot.Name!;
-                Accumulate(byMetal, name, production * slot.Weight / totalWeight);
+                Accumulate(byMetal, name, slot.Weight);
             }
         }
 
-        foreach (var kv in byMetal)
-            await _db.InsertFilteredMetalProductionAsync(requestId, kv.Key, (decimal)Math.Round(kv.Value, 2));
+        return byMetal;
     }
 
     private static void Accumulate(Dictionary<string, double> map, string key, double value)

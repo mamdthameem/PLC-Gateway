@@ -853,6 +853,219 @@ public class DatabaseService
     }
 
     // ════════════════════════════════════════════════════════════════════════
+    // DAILY TREND ROLLUP (plc_daily_trends) — powers the all-time Section 1 graphs
+    // ════════════════════════════════════════════════════════════════════════
+
+    // Longest gap between two samples of a heartbeat tag that is still treated as continuous
+    // runtime. DataCollection:PeriodicHeartbeatSeconds is 60 s, so anything beyond a few minutes
+    // means the gateway was not recording rather than the machine running untouched. Five minutes
+    // gives generous headroom for a slow scan or a brief restart while still refusing to count a
+    // multi-day outage as production time. Keep this comfortably above the heartbeat if that
+    // setting is ever raised.
+    private const int MaxOnSegmentSeconds = 300;
+
+    // Recomputes and upserts one row per day covering [fromDay, toExclusive).
+    //
+    // Fully idempotent: each day in range is recalculated from scratch out of Tier 2 +
+    // plc_cycles, so re-running can never double-count. That is what lets AggregationService
+    // call this every minute for just yesterday+today — the work per pass is bounded by two
+    // days of data instead of growing with total history, which is the whole point of the
+    // rollup (see the table comment in migration.sql).
+    //
+    // An "on" segment runs from one event to the next event for that tag; the still-open final
+    // segment is clamped to now (or the range end) so the current day reads live.
+    //
+    // Two things the segment maths must get right, both learned from real data:
+    //
+    //  1. A segment is SPLIT at day boundaries and each day credited only its own slice.
+    //     Attributing the whole segment to its start day let a single segment report 28 days of
+    //     runtime inside one calendar day.
+    //  2. A segment longer than MaxOnSegmentSeconds is a RECORDING GAP, not runtime. While the
+    //     gateway is scanning, the 60 s heartbeat guarantees consecutive samples for these tags;
+    //     a much larger spacing means the gateway was down, and crediting that span as "machine
+    //     on" both inflates totals and can push blast_on above machine_on (utility > 100%).
+    //     Only the first MaxOnSegmentSeconds of such a segment is counted; the rest is unknown.
+    //
+    // DISCONNECT rows are deliberately NOT filtered out: they carry the forced-OFF that makes a
+    // clean, observed disconnect contribute zero without relying on the gap guard at all.
+    public async Task UpsertDailyTrendsAsync(DateTime fromDay, DateTime toExclusive)
+    {
+        const string sql = @"
+            WITH blast_ev AS (
+                SELECT timestamp AS ts,
+                       COALESCE(value_bool, lower(value) IN ('1','true')) AS is_on,
+                       COALESCE(previous_value = '1', lower(previous_value) = 'true', FALSE) AS prev_on,
+                       COALESCE(LEAD(timestamp) OVER (ORDER BY timestamp),
+                                LEAST(@to, LOCALTIMESTAMP)) AS seg_end
+                FROM plc_historical_data
+                WHERE parameter_name = @blast_tag
+                  AND timestamp >= @from - INTERVAL '1 day' AND timestamp < @to
+            ),
+            mach_ev AS (
+                SELECT timestamp AS ts,
+                       COALESCE(value_bool, value_num <> 0, (value IS NOT NULL AND value <> '0')) AS is_on,
+                       COALESCE(LEAD(timestamp) OVER (ORDER BY timestamp),
+                                LEAST(@to, LOCALTIMESTAMP)) AS seg_end
+                FROM plc_historical_data
+                WHERE parameter_name = @machine_tag
+                  AND timestamp >= @from - INTERVAL '1 day' AND timestamp < @to
+            ),
+            blast_sec AS (
+                SELECT g::date AS day,
+                       SUM(GREATEST(EXTRACT(EPOCH FROM (
+                           LEAST(s.capped_end, g + INTERVAL '1 day') - GREATEST(s.ts, g)
+                       )), 0)) AS v
+                FROM (
+                    SELECT ts, LEAST(seg_end, ts + @max_seg_sec * INTERVAL '1 second') AS capped_end
+                    FROM blast_ev WHERE is_on
+                ) s
+                CROSS JOIN LATERAL generate_series(
+                    date_trunc('day', s.ts),
+                    date_trunc('day', s.capped_end - INTERVAL '1 microsecond'),
+                    INTERVAL '1 day') g
+                WHERE g::date >= @from
+                GROUP BY 1
+            ),
+            mach_sec AS (
+                SELECT g::date AS day,
+                       SUM(GREATEST(EXTRACT(EPOCH FROM (
+                           LEAST(s.capped_end, g + INTERVAL '1 day') - GREATEST(s.ts, g)
+                       )), 0)) AS v
+                FROM (
+                    SELECT ts, LEAST(seg_end, ts + @max_seg_sec * INTERVAL '1 second') AS capped_end
+                    FROM mach_ev WHERE is_on
+                ) s
+                CROSS JOIN LATERAL generate_series(
+                    date_trunc('day', s.ts),
+                    date_trunc('day', s.capped_end - INTERVAL '1 microsecond'),
+                    INTERVAL '1 day') g
+                WHERE g::date >= @from
+                GROUP BY 1
+            ),
+            edges AS (
+                SELECT ts::date AS day, COUNT(*) AS v
+                FROM blast_ev WHERE is_on AND NOT prev_on AND ts >= @from GROUP BY 1
+            ),
+            cyc AS (
+                SELECT blast_end::date AS day,
+                       SUM(COALESCE(production_kg, 0)) AS prod,
+                       SUM(COALESCE(energy_kwh, 0))    AS kwh
+                FROM plc_cycles
+                WHERE blast_end >= @from AND blast_end < @to
+                GROUP BY 1
+            ),
+            tonn AS (
+                SELECT DISTINCT ON (timestamp::date)
+                       timestamp::date AS day, value_num AS v
+                FROM plc_historical_data
+                WHERE parameter_name = @tonnage_tag AND value_num IS NOT NULL
+                  AND timestamp >= @from AND timestamp < @to
+                ORDER BY timestamp::date, timestamp DESC
+            ),
+            days AS (
+                SELECT day FROM blast_sec
+                UNION SELECT day FROM mach_sec
+                UNION SELECT day FROM edges
+                UNION SELECT day FROM cyc
+                UNION SELECT day FROM tonn
+            )
+            INSERT INTO plc_daily_trends
+                (day, machine_on_sec, blast_on_sec, cycle_count,
+                 production_kg, energy_kwh, tonnage_end, updated_at)
+            SELECT d.day,
+                   ROUND(COALESCE(m.v, 0)::numeric, 1),
+                   ROUND(COALESCE(b.v, 0)::numeric, 1),
+                   COALESCE(e.v, 0)::int,
+                   ROUND(COALESCE(c.prod, 0), 2),
+                   ROUND(COALESCE(c.kwh, 0), 6),
+                   t.v,
+                   NOW()
+            FROM days d
+            LEFT JOIN blast_sec b ON b.day = d.day
+            LEFT JOIN mach_sec  m ON m.day = d.day
+            LEFT JOIN edges     e ON e.day = d.day
+            LEFT JOIN cyc       c ON c.day = d.day
+            LEFT JOIN tonn      t ON t.day = d.day
+            ON CONFLICT (day) DO UPDATE SET
+                machine_on_sec = EXCLUDED.machine_on_sec,
+                blast_on_sec   = EXCLUDED.blast_on_sec,
+                cycle_count    = EXCLUDED.cycle_count,
+                production_kg  = EXCLUDED.production_kg,
+                energy_kwh     = EXCLUDED.energy_kwh,
+                tonnage_end    = EXCLUDED.tonnage_end,
+                updated_at     = NOW()";
+
+        await RetryAsync(async conn =>
+        {
+            await using var cmd = new NpgsqlCommand(sql, conn);
+            cmd.Parameters.AddWithValue("from", fromDay.Date);
+            cmd.Parameters.AddWithValue("to", toExclusive);
+            cmd.Parameters.AddWithValue("blast_tag", "Blast ON/OFF");
+            cmd.Parameters.AddWithValue("machine_tag", "Machine status");
+            cmd.Parameters.AddWithValue("tonnage_tag", "Tonnage");
+            cmd.Parameters.AddWithValue("max_seg_sec", MaxOnSegmentSeconds);
+            await cmd.ExecuteNonQueryAsync();
+        }, $"UpsertDailyTrends {fromDay:yyyy-MM-dd}..{toExclusive:yyyy-MM-dd}");
+    }
+
+    // Earliest Tier 2 timestamp, used to size the one-time rollup backfill. Null on an empty DB.
+    public async Task<DateTime?> GetEarliestHistoryTimestampAsync()
+    {
+        DateTime? result = null;
+        await RetryAsync(async conn =>
+        {
+            await using var cmd = new NpgsqlCommand("SELECT MIN(timestamp) FROM plc_historical_data", conn);
+            var scalar = await cmd.ExecuteScalarAsync();
+            if (scalar != null && scalar != DBNull.Value)
+                result = Convert.ToDateTime(scalar);
+        }, "GetEarliestHistoryTimestamp");
+        return result;
+    }
+
+    public async Task<bool> DailyTrendsEmptyAsync()
+    {
+        bool empty = true;
+        await RetryAsync(async conn =>
+        {
+            await using var cmd = new NpgsqlCommand("SELECT EXISTS (SELECT 1 FROM plc_daily_trends)", conn);
+            var scalar = await cmd.ExecuteScalarAsync();
+            empty = !(scalar is bool b && b);
+        }, "DailyTrendsEmpty");
+        return empty;
+    }
+
+    // Clears the rollup so it can be rebuilt from raw history (--rebuild-aggregation).
+    // Safe: plc_daily_trends is derived data, fully reconstructible from plc_historical_data.
+    // This does NOT touch plc_historical_data, which is never deleted.
+    public async Task ResetDailyTrendsAsync()
+    {
+        await RetryAsync(async conn =>
+        {
+            await using var cmd = new NpgsqlCommand("DELETE FROM plc_daily_trends", conn);
+            await cmd.ExecuteNonQueryAsync();
+        }, "ResetDailyTrends");
+    }
+
+    // Rebuilds every day from the first recorded Tier 2 row up to tomorrow. Cost is proportional
+    // to total history, so this runs once (on an empty rollup or an explicit rebuild) — never on
+    // the per-minute path.
+    public async Task BackfillDailyTrendsAsync()
+    {
+        var earliest = await GetEarliestHistoryTimestampAsync();
+        if (earliest == null)
+        {
+            _logger.LogInformation("Daily trend backfill skipped — no historical data yet.");
+            return;
+        }
+
+        var from = earliest.Value.Date;
+        var to   = DateTime.Now.Date.AddDays(1);
+        _logger.LogInformation("Backfilling daily trends {from:yyyy-MM-dd}..{to:yyyy-MM-dd}.", from, to);
+        await UpsertDailyTrendsAsync(from, to);
+        _logger.LogInformation("Daily trend backfill complete.");
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
     // SECTION 2: Per-metal production (plc_filtered_metal_production)
     // ════════════════════════════════════════════════════════════════════════
 

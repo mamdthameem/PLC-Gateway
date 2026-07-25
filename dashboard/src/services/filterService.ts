@@ -1,4 +1,7 @@
-import type { FilterRequest, FilterStatus, FilterResult, FilteredCycle, ShotsBreakdownEntry } from '../types';
+import type {
+  FilterRequest, FilterStatus, FilterResult, FilteredCycle,
+  FilteredMetalProduction, ShotsBreakdownEntry,
+} from '../types';
 
 const API_BASE = (import.meta.env.VITE_API_URL as string) || '';
 
@@ -44,6 +47,19 @@ export async function fetchFilterCycles(requestId: number): Promise<FilteredCycl
   });
   if (!res.ok) throw new Error(`Cycles fetch failed: ${res.status} ${res.statusText}`);
   return res.json() as Promise<FilteredCycle[]>;
+}
+
+/**
+ * Section 2 production per casting metal — summed DECLARED casting-metal weights for the
+ * filtered scope. Section 2 reports production this way; Section 1 reports it from the Tonnage
+ * accumulator instead, so the two figures answer different questions and need not match.
+ */
+export async function fetchFilterMetals(requestId: number): Promise<FilteredMetalProduction[]> {
+  const res = await fetch(`${API_BASE}/api/filter/${requestId}/metals`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Metal production fetch failed: ${res.status} ${res.statusText}`);
+  return res.json() as Promise<FilteredMetalProduction[]>;
 }
 
 export async function fetchFilterShots(requestId: number): Promise<ShotsBreakdownEntry[]> {

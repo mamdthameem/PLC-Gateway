@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import {
   Paper, Typography, Box, Chip, Dialog, DialogTitle,
-  DialogContent, IconButton, Tooltip,
+  DialogContent, IconButton, Tooltip, CircularProgress,
 } from '@mui/material';
 import BarChartIcon from '@mui/icons-material/BarChart';
 import CloseIcon from '@mui/icons-material/Close';
@@ -19,6 +19,13 @@ export default function ExpandableMetricCard({
   parameterName, value, updatedAt, graphTitle, renderGraph,
 }: Props) {
   const [open, setOpen] = useState(false);
+
+  // Recharts' ResponsiveContainer sizes itself from its parent. Mounted while the dialog is still
+  // animating open, it can measure zero width and render nothing. Waiting for the transition to
+  // finish guarantees it measures a settled container.
+  const [chartReady, setChartReady] = useState(false);
+
+  const closeDialog = () => { setOpen(false); setChartReady(false); };
 
   const meta      = PARAM_META[parameterName];
   const label     = meta?.label ?? parameterName;
@@ -98,15 +105,25 @@ export default function ExpandableMetricCard({
       </Paper>
 
       {hasGraph && (
-        <Dialog open={open} onClose={() => setOpen(false)} maxWidth="md" fullWidth>
+        <Dialog
+          open={open}
+          onClose={closeDialog}
+          maxWidth="md"
+          fullWidth
+          slotProps={{ transition: { onEntered: () => setChartReady(true) } }}
+        >
           <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             {graphTitle ?? label}
-            <IconButton onClick={() => setOpen(false)} size="small">
+            <IconButton onClick={closeDialog} size="small">
               <CloseIcon />
             </IconButton>
           </DialogTitle>
           <DialogContent>
-            {open && renderGraph?.()}
+            {chartReady ? renderGraph?.() : (
+              <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 320 }}>
+                <CircularProgress />
+              </Box>
+            )}
           </DialogContent>
         </Dialog>
       )}

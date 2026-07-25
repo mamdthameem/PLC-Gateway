@@ -100,6 +100,26 @@ public class FilterController : ControllerBase
     }
 
     /// <summary>
+    /// Production per casting metal from plc_filtered_metal_production once status is 'done'.
+    /// Values are summed declared casting-metal weights — this is how Section 2 reports
+    /// production (Section 1 reports it from the Tonnage accumulator instead).
+    /// </summary>
+    [HttpGet("{id}/metals")]
+    public async Task<IActionResult> GetMetals(int id)
+    {
+        try
+        {
+            var data = await _service.GetMetalProductionAsync(id);
+            return Ok(data);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to fetch metal production for request {Id}", id);
+            return StatusCode(500, new { error = "Failed to fetch metal production" });
+        }
+    }
+
+    /// <summary>
     /// Shots breakdown from plc_filtered_shots_breakdown once status is 'done'.
     /// </summary>
     [HttpGet("{id}/shots")]

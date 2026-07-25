@@ -1,6 +1,5 @@
 export { Sidebar } from './Sidebar';
 export { TopBar } from './TopBar';
-export { ParameterCard } from './ParameterCard';
 export { LifetimeSection } from './LifetimeSection';
 export { MachineDashboard } from './MachineDashboard';
 export { default as ShotsBreakdownChart } from './ShotsBreakdownChart';
@@ -13,4 +12,5 @@ export { default as ExpandableMetricCard } from './ExpandableMetricCard';
 export { default as UtilityGraph } from './UtilityGraph';
 export { default as ProductionGraph } from './ProductionGraph';
 export { default as CycleDataGraph } from './CycleDataGraph';
+export { default as EnergyTrendGraph } from './EnergyTrendGraph';
 export { default as AmpsGraph } from './AmpsGraph';

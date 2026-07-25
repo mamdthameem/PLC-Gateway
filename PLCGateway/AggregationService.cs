@@ -55,6 +55,12 @@ public class AggregationService : BackgroundService
 
                 // Update Section 1 lifetime parameters
                 await _calculationService.ComputeLifetimeParametersAsync();
+
+                // Refresh the daily trend rollup that backs the all-time Section 1 graphs.
+                // Only yesterday and today are recomputed (idempotent upsert), so this stays
+                // constant-cost per pass however large plc_historical_data grows.
+                var today = DateTime.Now.Date;
+                await _dbService.UpsertDailyTrendsAsync(today.AddDays(-1), today.AddDays(1));
             }
             catch (Exception ex)
             {

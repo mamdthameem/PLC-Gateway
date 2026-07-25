@@ -4,121 +4,100 @@ import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer,
 } from 'recharts';
-import { submitFilterRequest, pollFilterStatus, fetchFilterCycles } from '../services/filterService';
+import { fetchFilterCycles } from '../services/filterService';
 import type { FilteredCycle } from '../types';
 
 interface Props {
   mode: 'energy' | 'efficiency';
-  requestId?: number;
+  /**
+   * Section 2 only — the completed filter request whose cycles are charted. Section 1 uses
+   * EnergyTrendGraph instead: it reads the daily rollup rather than submitting a filter request,
+   * so opening a Section 1 graph no longer writes a row to calculation_requests.
+   */
+  requestId: number;
 }
 
-type State = 'idle' | 'loading' | 'done' | 'error';
+type State = 'loading' | 'done' | 'error';
 
+/** Per-cycle energy / efficiency within one filtered window. */
 export default function CycleDataGraph({ mode, requestId }: Props) {
   const [cycles, setCycles] = useState<FilteredCycle[]>([]);
-  const [state, setState]   = useState<State>('idle');
+  const [state, setState]   = useState<State>('loading');
   const [error, setError]   = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
-    let pollId: ReturnType<typeof setInterval> | null = null;
     setState('loading');
     setError(null);
 
-    async function load() {
-      try {
-        let id = requestId;
-
-        if (id == null) {
-          // Auto-trigger an all-time filter request
-          const nowIso   = new Date().toISOString();
-          const epochIso = '2000-01-01T00:00:00.000Z';
-          id = await submitFilterRequest({
-            filterStart: epochIso,
-            filterEnd:   nowIso,
-            filterBy:    'time',
-            periodLabel: null,
-          });
-
-          // Poll for done
-          await new Promise<void>((resolve, reject) => {
-            pollId = setInterval(async () => {
-              try {
-                const status = await pollFilterStatus(id!);
-                if (status.status === 'done') {
-                  if (pollId) clearInterval(pollId);
-                  resolve();
-                } else if (status.status === 'error') {
-                  if (pollId) clearInterval(pollId);
-                  reject(new Error('Backend reported error for all-time request'));
-                }
-              } catch (e) {
-                if (pollId) clearInterval(pollId);
-                reject(e);
-              }
-            }, 2500);
-          });
-        }
-
-        const data = await fetchFilterCycles(id);
+    fetchFilterCycles(requestId)
+      .then(data => {
         if (!active) return;
         setCycles(data);
         setState('done');
-      } catch (e) {
+      })
+      .catch(e => {
         if (!active) return;
         setError((e as Error).message);
         setState('error');
-      }
-    }
+      });
 
-    load();
-    return () => {
-      active = false;
-      if (pollId) clearInterval(pollId);
-    };
-  }, [requestId, mode]);
+    return () => { active = false; };
+  }, [requestId]);
 
-  if (state === 'loading' || state === 'idle')
-    return <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}><CircularProgress /></Box>;
+  if (state === 'loading') return <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}><CircularProgress /></Box>;
   if (state === 'error')   return <Alert severity="error">{error}</Alert>;
-  if (!cycles.length)      return <Typography color="text.secondary">No cycle data available.</Typography>;
+  if (!cycles.length)      return <Typography color="text.secondary">No cycle data in this filter.</Typography>;
 
-  // Show last 100 cycles to keep chart readable
-  const visible = cycles.slice(-100);
+  // Keep the chart readable when a filter spans a very large number of cycles.
+  const visible = cycles.slice(-200);
+  const truncated = cycles.length > visible.length;
+
+  const note = truncated ? (
+    <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>
+      Showing the most recent {visible.length} of {cycles.length} cycles — narrow the filter to see
+      earlier ones.
+    </Typography>
+  ) : null;
 
   if (mode === 'energy') {
     const chartData = visible.map(c => ({ cycle: c.cycleNumber, kWh: parseFloat(c.energyKwh.toFixed(3)) }));
     return (
-      <Box sx={{ width: '100%', height: 320 }}>
-        <ResponsiveContainer>
-          <BarChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="cycle" tick={{ fontSize: 10 }} label={{ value: 'Cycle #', position: 'insideBottom', offset: -4 }} />
-            <YAxis unit=" kWh" tick={{ fontSize: 11 }} />
-            <Tooltip formatter={(v: number | undefined) => [`${(v ?? 0).toFixed(3)} kWh`, 'Energy']} />
-            <Bar dataKey="kWh" fill="#1565c0" radius={[2, 2, 0, 0]} name="Energy (kWh)" />
-          </BarChart>
-        </ResponsiveContainer>
+      <Box sx={{ width: '100%' }}>
+        {note}
+        <Box sx={{ width: '100%', height: 320 }}>
+          <ResponsiveContainer>
+            <BarChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="cycle" tick={{ fontSize: 10 }} label={{ value: 'Cycle #', position: 'insideBottom', offset: -4 }} />
+              <YAxis unit=" kWh" tick={{ fontSize: 11 }} />
+              <Tooltip formatter={(v: number | undefined) => [`${(v ?? 0).toFixed(3)} kWh`, 'Energy']} />
+              <Bar dataKey="kWh" fill="#1565c0" radius={[2, 2, 0, 0]} name="Energy (kWh)" />
+            </BarChart>
+          </ResponsiveContainer>
+        </Box>
       </Box>
     );
   }
 
-  // efficiency mode
   const chartData = visible.map(c => ({
     cycle: c.cycleNumber,
     kwPerKg: c.productionKg > 0 ? parseFloat((c.energyKwh / c.productionKg).toFixed(4)) : 0,
   }));
   return (
-    <Box sx={{ width: '100%', height: 320 }}>
-      <ResponsiveContainer>
-        <LineChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="cycle" tick={{ fontSize: 10 }} label={{ value: 'Cycle #', position: 'insideBottom', offset: -4 }} />
-          <YAxis unit=" kWh/kg" tick={{ fontSize: 11 }} />
-          <Tooltip formatter={(v: number | undefined) => [`${(v ?? 0).toFixed(4)} kWh/kg`, 'Efficiency']} />
-          <Line type="monotone" dataKey="kwPerKg" stroke="#e65100" dot={false} strokeWidth={2} name="kWh/kg" />
-        </LineChart>
-      </ResponsiveContainer>
+    <Box sx={{ width: '100%' }}>
+      {note}
+      <Box sx={{ width: '100%', height: 320 }}>
+        <ResponsiveContainer>
+          <LineChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="cycle" tick={{ fontSize: 10 }} label={{ value: 'Cycle #', position: 'insideBottom', offset: -4 }} />
+            <YAxis unit=" kWh/kg" tick={{ fontSize: 11 }} />
+            <Tooltip formatter={(v: number | undefined) => [`${(v ?? 0).toFixed(4)} kWh/kg`, 'Efficiency']} />
+            <Line type="monotone" dataKey="kwPerKg" stroke="#e65100" dot={false} strokeWidth={2} name="kWh/kg" />
+          </LineChart>
+        </ResponsiveContainer>
+      </Box>
     </Box>
   );
 }

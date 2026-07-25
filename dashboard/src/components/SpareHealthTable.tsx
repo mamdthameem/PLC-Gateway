@@ -6,6 +6,7 @@ import {
 import { fetchSpareStatus } from '../services/spareStatusService';
 import type { SpareStatus } from '../types';
 import { formatRunHours } from '../utils/unitConverters';
+import { usePlcConnection } from '../utils/usePlcConnection';
 
 const POLL_MS          = 10_000;
 const POPUP_COOLDOWN   = 30 * 60 * 1000; // 30 minutes
@@ -19,6 +20,7 @@ export default function SpareHealthTable() {
   const [loading, setLoading]   = useState(true);
   const [queue, setQueue]       = useState<PopupMsg[]>([]);
   const [shown, setShown]       = useState<PopupMsg | null>(null);
+  const { connected, lastScanAt } = usePlcConnection();
 
   // Per-spare cooldown tracking (key = `${impellerNum}-${spareIndex}-${type}`)
   const lastShown = useRef<Map<string, number>>(new Map());
@@ -95,7 +97,14 @@ export default function SpareHealthTable() {
 
   return (
     <Box>
-      <Typography variant="h6" sx={{ mb: 2 }}>Spare Parts Health</Typography>
+      <Typography variant="h6" sx={{ mb: connected ? 2 : 0.5 }}>Spare Parts Health</Typography>
+
+      {!connected && (
+        <Alert severity="warning" sx={{ mb: 2, py: 0.25 }}>
+          PLC disconnected — run hours below are the last values read
+          {lastScanAt ? ` at ${new Date(lastScanAt).toLocaleString()}` : ''} and are not advancing.
+        </Alert>
+      )}
 
       {/* Queued popup (one at a time) */}
       <Snackbar

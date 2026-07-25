@@ -51,6 +51,35 @@ export function formatRunHours(val: number): string {
   return `${val.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} hrs`;
 }
 
+/**
+ * Canonical display order for parameter cards, used by BOTH sections.
+ *
+ * The API returns parameters ordered by parameter_name (alphabetical), which is not a sensible
+ * reading order on screen — sort against this list instead of relying on the response order.
+ * machine_status is included for completeness but is rendered by its own tile above the grid.
+ */
+export const PARAM_ORDER: string[] = [
+  'machine_status',
+  'machine_utility_pct',
+  'production_qty_kg',
+  'energy_kwh_total',
+  'energy_per_casting_kwh_kg',
+  'blast_time_sec',
+  'cycle_count',
+  'avg_shot_refill_time_sec',
+  'last_refill_epoch_sec',
+];
+
+/** Sorts by PARAM_ORDER; anything unlisted keeps a stable position after the known ones. */
+export function byParamOrder<T extends { parameterName: string }>(a: T, b: T): number {
+  const ia = PARAM_ORDER.indexOf(a.parameterName);
+  const ib = PARAM_ORDER.indexOf(b.parameterName);
+  if (ia === -1 && ib === -1) return a.parameterName.localeCompare(b.parameterName);
+  if (ia === -1) return 1;
+  if (ib === -1) return -1;
+  return ia - ib;
+}
+
 export const PARAM_META: Record<string, { label: string; unit?: string }> = {
   machine_utility_pct:       { label: 'Machine Utility',      unit: '%' },
   production_qty_kg:         { label: 'Production' },

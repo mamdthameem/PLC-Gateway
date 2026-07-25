@@ -42,6 +42,7 @@ builder.Services.AddScoped<IAmpsService, AmpsService>();
 builder.Services.AddScoped<ISpareStatusService, SpareStatusService>();
 builder.Services.AddScoped<IMachineStatusService, MachineStatusService>();
 builder.Services.AddScoped<IHistoricalService, HistoricalService>();
+builder.Services.AddScoped<ITrendsService, TrendsService>();
 builder.Services.AddScoped<ICyclesService, CyclesService>();
 builder.Services.AddScoped<IUserService, UserService>();
 
@@ -101,10 +102,21 @@ using (var scope = app.Services.CreateScope())
         try
         {
             await db.ResetAggregationStateAsync();
-            logger.LogWarning("Aggregation state reset — Section 1 will rebuild from full history.");
+            await db.ResetDailyTrendsAsync();
+            logger.LogWarning("Aggregation state + daily trend rollup reset — both rebuild from full history.");
         }
         catch (Exception ex) { logger.LogError(ex, "Failed to reset aggregation state."); }
     }
+
+    // Daily trend rollup backfill: only when empty (fresh install, or just reset above). Cost is
+    // proportional to existing history, so it is a one-time job — the per-minute path afterwards
+    // only ever touches yesterday+today.
+    try
+    {
+        if (await db.DailyTrendsEmptyAsync())
+            await db.BackfillDailyTrendsAsync();
+    }
+    catch (Exception ex) { logger.LogError(ex, "Daily trend backfill failed."); }
 
     // Offline-gap handling: force machine/blast OFF backdated to the last recorded scan so the
     // unobserved gap contributes zero to every duration and accumulator.

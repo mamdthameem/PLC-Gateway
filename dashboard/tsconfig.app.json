@@ -23,9 +23,11 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true,
-    "baseUrl": ".",
+
+    /* Path alias, mirroring the resolve.alias in vite.config.ts. No "baseUrl": since
+       TypeScript 5.0 "paths" resolves relative to this file, and baseUrl is deprecated. */
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["./src/*"]
     }
   },
   "include": ["src"]
