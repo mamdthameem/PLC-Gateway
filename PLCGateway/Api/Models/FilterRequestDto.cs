@@ -9,6 +9,11 @@ public class FilterRequestInput
     public int? FilterCycleFrom { get; set; }
     public int? FilterCycleTo { get; set; }
     public string? FilterMetalName { get; set; }
+
+    // Section 2 parameter keys to compute — see CalculationService.Section2ParameterKeys.
+    // Omit (or send null/[]) to compute all of them, which is what every caller written before
+    // the per-parameter toggles existed does.
+    public string[]? SelectedParameters { get; set; }
 }
 
 public class FilterStatusDto

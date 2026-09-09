@@ -60,7 +60,7 @@ const SidebarInner: React.FC = () => {
         {/* Logo row */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '0 8px', marginBottom: 20, overflow: 'hidden' }}>
           <img
-            src="/Untitled_design-removebg-preview.png"
+            src={`${import.meta.env.BASE_URL}Untitled_design-removebg-preview.png`}
             alt="SENSE SHOT"
             style={{ width: 32, height: 28, objectFit: 'contain', flexShrink: 0 }}
           />

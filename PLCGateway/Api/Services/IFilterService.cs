@@ -8,7 +8,7 @@ public interface IFilterService
     Task<FilterStatusDto?> GetStatusAsync(int requestId);
     Task<List<FilterResultDto>> GetResultsAsync(int requestId);
     Task<List<FilteredCycleDto>> GetCycleDataAsync(int requestId);
-    Task<List<ShotsBreakdownDto>> GetShotsBreakdownAsync(int requestId);
     Task<List<FilteredMetalProductionDto>> GetMetalProductionAsync(int requestId);
+    Task<List<FilteredAmpsDto>> GetAmpsDataAsync(int requestId);
     Task<FilteredRequestInfoDto?> GetLatestCompletedAsync();
 }

@@ -94,6 +94,12 @@ ALTER TABLE calculation_requests ADD COLUMN IF NOT EXISTS filter_cycle_from INTE
 ALTER TABLE calculation_requests ADD COLUMN IF NOT EXISTS filter_cycle_to   INTEGER;
 ALTER TABLE calculation_requests ADD COLUMN IF NOT EXISTS filter_metal_name TEXT;
 
+-- Per-parameter calculation toggles: the Section 2 parameter keys the dashboard asked for.
+-- NULL means "all of them", which is what every row written before this column existed means,
+-- and what the admin API sends when it omits the field — so old rows and old callers keep
+-- working unchanged. See README "Section 2 — per-parameter calculation toggles".
+ALTER TABLE calculation_requests ADD COLUMN IF NOT EXISTS selected_parameters TEXT[];
+
 CREATE INDEX IF NOT EXISTS idx_calc_requests_pending
     ON calculation_requests (created_at)
     WHERE status = 'pending';
@@ -131,12 +137,16 @@ CREATE TABLE IF NOT EXISTS plc_filtered_cycle_data (
     metal_4_weight_kg   NUMERIC,
     production_kg       NUMERIC,
     energy_kwh          NUMERIC,
-    shots_usage         NUMERIC,
     calculated_at       TIMESTAMP DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_filtered_cycle_request
     ON plc_filtered_cycle_data (request_id);
+
+-- shots_usage (refill weight in cycle ÷ production_kg) was removed: refills don't align to cycle
+-- boundaries, so a per-cycle ratio wasn't meaningful. Drop it from any existing installation —
+-- the CREATE TABLE above only affects fresh installs.
+ALTER TABLE plc_filtered_cycle_data DROP COLUMN IF EXISTS shots_usage;
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- SHOTS BREAKDOWN (Section 1): one row per refill interval, cleared and rewritten each minute
@@ -297,10 +307,23 @@ CREATE TABLE IF NOT EXISTS plc_aggregation_state (
     last_refill_any_ts      TIMESTAMP,
     -- Energy running total (sum of plc_cycles.energy_kwh)
     energy_total            NUMERIC           NOT NULL DEFAULT 0,
-    last_cycle_number       INTEGER           NOT NULL DEFAULT 0
+    last_cycle_number       INTEGER           NOT NULL DEFAULT 0,
+    -- Running sum of refill weight (real change events only), for effective_shots_usage
+    total_refill_weight_kg  NUMERIC           NOT NULL DEFAULT 0
 );
 
 INSERT INTO plc_aggregation_state (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+
+-- Idempotent add for installs migrated from before effective_shots_usage existed.
+ALTER TABLE plc_aggregation_state
+    ADD COLUMN IF NOT EXISTS total_refill_weight_kg NUMERIC NOT NULL DEFAULT 0;
+
+-- effective_shots_usage (kg cast per kg shot) was inverted and rescaled to
+-- effective_shots_usage_kg_per_ton (kg of shot consumed per tonne of casting). The parameter is
+-- keyed by name, so the rename leaves the old row behind — and the dashboard's lifetime endpoint
+-- is an unfiltered SELECT, which would render it as a ghost tile with the old unit's number.
+-- Drop it; the next aggregation pass (within 60 s) writes the new key.
+DELETE FROM plc_lifetime_parameters WHERE parameter_name = 'effective_shots_usage';
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- DAILY TREND ROLLUP: one row per calendar day, maintained incrementally by
@@ -358,6 +381,24 @@ CREATE TABLE IF NOT EXISTS plc_filtered_metal_production (
 
 CREATE INDEX IF NOT EXISTS idx_filtered_metal_request
     ON plc_filtered_metal_production (request_id);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- SECTION 2 FILTERED IMPELLER CURRENT: one row per cycle per impeller per request.
+-- avg_amps is AVG(value_num) over plc_historical_data for that impeller within the cycle's
+-- blast_start..blast_end window — raw 1 Hz current samples never leave Postgres. NULL means the
+-- cycle had no in-window sample for that impeller (rendered as a gap, not a false zero).
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS plc_filtered_amps_data (
+    id               SERIAL   PRIMARY KEY,
+    request_id       INTEGER  NOT NULL REFERENCES calculation_requests(id),
+    cycle_number     INTEGER  NOT NULL,
+    impeller_number  SMALLINT NOT NULL,
+    avg_amps         NUMERIC,
+    calculated_at    TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_filtered_amps_request
+    ON plc_filtered_amps_data (request_id);
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- SHOTS BREAKDOWN race fix (Part C3): unique key on refill_timestamp so the table is

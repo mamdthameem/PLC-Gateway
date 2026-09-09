@@ -33,6 +33,15 @@ export function formatKwhPerKg(val: number): string {
   return `${val.toFixed(4)} kWh/kg`;
 }
 
+/**
+ * Shot consumed per tonne of casting. Lower is better — this is a consumption rate, not an
+ * efficiency ratio. (Replaced the old kg/kg form, which was its inverse.)
+ */
+export function formatKgPerTonne(val: number): string {
+  if (!isFinite(val)) return '—';
+  return `${val.toFixed(4)} kg/T`;
+}
+
 export function formatKg(val: number): string {
   if (!isFinite(val)) return '—';
   return `${val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kg`;
@@ -68,6 +77,7 @@ export const PARAM_ORDER: string[] = [
   'cycle_count',
   'avg_shot_refill_time_sec',
   'last_refill_epoch_sec',
+  'effective_shots_usage_kg_per_ton',
 ];
 
 /** Sorts by PARAM_ORDER; anything unlisted keeps a stable position after the known ones. */
@@ -80,15 +90,44 @@ export function byParamOrder<T extends { parameterName: string }>(a: T, b: T): n
   return ia - ib;
 }
 
-export const PARAM_META: Record<string, { label: string; unit?: string }> = {
-  machine_utility_pct:       { label: 'Machine Utility',      unit: '%' },
-  production_qty_kg:         { label: 'Production' },
-  energy_kwh_total:          { label: 'Total Energy' },
-  energy_per_casting_kwh_kg: { label: 'Energy per Casting' },
-  blast_time_sec:            { label: 'Blast Time' },
-  cycle_count:               { label: 'Blast Cycles',         unit: 'cycles' },
-  avg_shot_refill_time_sec:  { label: 'Avg Shot Refill Time' },
-  last_refill_epoch_sec:     { label: 'Last Shot Refill' },
+/**
+ * Tile metadata.
+ *
+ * `subtitle` is the one-line explanation printed under the value. It carries its weight where a
+ * parameter means something different in each section — Section 1 production is the PLC's Tonnage
+ * accumulator while Section 2 production is the declared casting-item weight, and with both
+ * sections now on screen at once those two tiles are visible side by side. Where a subtitle would
+ * differ per section, `section2Subtitle` overrides it.
+ */
+export const PARAM_META: Record<
+  string,
+  { label: string; unit?: string; subtitle?: string; section2Subtitle?: string }
+> = {
+  machine_utility_pct: {
+    label: 'Machine Utility',
+    unit: '%',
+    subtitle: 'blast time as a share of machine on-time',
+  },
+  production_qty_kg: {
+    label: 'Production',
+    subtitle: "from the PLC's Tonnage accumulator",
+    section2Subtitle: 'declared casting-item weight',
+  },
+  energy_kwh_total: { label: 'Total Energy' },
+  energy_per_casting_kwh_kg: {
+    label: 'Energy per Casting',
+    subtitle: 'per kg from the Tonnage accumulator',
+    section2Subtitle: 'per kg of declared casting-item weight',
+  },
+  blast_time_sec:           { label: 'Blast Time' },
+  cycle_count:              { label: 'Blast Cycles', unit: 'cycles' },
+  avg_shot_refill_time_sec: { label: 'Avg Shot Refill Time' },
+  last_refill_epoch_sec:    { label: 'Last Shot Refill' },
+  effective_shots_usage_kg_per_ton: {
+    label: 'Effective Shots Usage',
+    unit: 'kg/T',
+    subtitle: 'shot consumed per tonne of casting',
+  },
 };
 
 export function formatParameterValue(name: string, raw: string): string {
@@ -110,6 +149,8 @@ export function formatParameterValue(name: string, raw: string): string {
       return secondsToHoursMin(n);
     case 'last_refill_epoch_sec':
       return epochToLocalDatetime(n);
+    case 'effective_shots_usage_kg_per_ton':
+      return formatKgPerTonne(n);
     default:
       return raw;
   }

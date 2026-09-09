@@ -32,7 +32,20 @@ const inputSx = {
     fontSize: '0.875rem',
   },
   '& .MuiInputLabel-root.Mui-focused': { color: '#ffffff' },
-  '& .MuiInputBase-input': { color: 'rgba(255,255,255,0.92)', fontSize: '0.95rem' },
+  '& .MuiInputBase-input': {
+    color: 'rgba(255,255,255,0.92)',
+    fontSize: '0.95rem',
+    // Chrome/Edge paint autofilled inputs with a forced light background via this box-shadow
+    // trick (the only reliable override); without it, autofilled username/password fields
+    // show a light box that clashes with the rest of the dark form.
+    '&:-webkit-autofill, &:-webkit-autofill:hover, &:-webkit-autofill:focus, &:-webkit-autofill:active': {
+      WebkitBoxShadow: '0 0 0 1000px #1c1c1c inset',
+      WebkitTextFillColor: 'rgba(255,255,255,0.92)',
+      caretColor: '#ffffff',
+      borderRadius: 'inherit',
+      transition: 'background-color 9999s ease-in-out 0s',
+    },
+  },
 };
 
 export const Login: React.FC = () => {
@@ -140,7 +153,7 @@ export const Login: React.FC = () => {
           >
             <Box
               component="img"
-              src="/Untitled_design-removebg-preview.png"
+              src={`${import.meta.env.BASE_URL}Untitled_design-removebg-preview.png`}
               alt="Sense Shot"
               sx={{
                 width: { xs: 52, md: 68 },
@@ -286,7 +299,7 @@ export const Login: React.FC = () => {
           >
             <Box
               component="img"
-              src="/Untitled_design-removebg-preview.png"
+              src={`${import.meta.env.BASE_URL}Untitled_design-removebg-preview.png`}
               alt="Sense Shot"
               sx={{ width: 34, height: 32, objectFit: 'contain' }}
             />

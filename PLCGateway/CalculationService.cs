@@ -116,6 +116,17 @@ public class CalculationService
             }
             await _db.UpsertLifetimeParameterAsync("avg_shot_refill_time_sec", avgRefillTimeSec);
 
+            // Shot consumed per tonne of casting: total_refill_weight_kg ÷ (production_qty_kg / 1000).
+            // Both cumulative since commissioning. Lower is better — it is a consumption rate, not
+            // an efficiency ratio (this is the inverse of the old kg/kg form, rescaled to tonnes).
+            //
+            // The guard is on the DENOMINATOR, production: null (not zero) when nothing has been
+            // cast yet, so the dashboard shows "—" instead of a misleading 0 or an infinity.
+            decimal? shotsPerTonne = productionKg > 0
+                ? Math.Round(state.TotalRefillWeightKg / (decimal)(productionKg / 1000.0), 4)
+                : null;
+            await _db.UpsertLifetimeParameterAsync("effective_shots_usage_kg_per_ton", shotsPerTonne);
+
             _logger.LogDebug("Lifetime parameters updated at {time} (watermark id {id}).", now, state.LastHistId);
         }
         catch (Exception ex)
@@ -188,6 +199,11 @@ public class CalculationService
         s.RefillCount++;
         s.FirstRefillChangeTs ??= ev.Timestamp;
 
+        // effective_shots_usage_kg_per_ton NUMERATOR: sum only real change-event weights, guarding
+        // against the occasional zero/negative glitch reading. Unchanged by the kg/T conversion —
+        // that inverted the ratio, it did not touch how refill weight accumulates.
+        if (ev.ValueNum is > 0) s.TotalRefillWeightKg += (decimal)ev.ValueNum.Value;
+
         if (s.PrevRefillChangeTs.HasValue)
         {
             int blastCount = await _db.CountBlastRisingEdgesBetweenAsync(
@@ -202,15 +218,76 @@ public class CalculationService
     // SECTION 2 — Filtered parameters (on-demand, per calculation_requests row)
     // ════════════════════════════════════════════════════════════════════════
 
+    // The complete set of Section 2 parameter keys a request may ask for. This is the ONLY list —
+    // the dashboard's toggles, the admin API's validation and the compute gating all read it, so
+    // there is no second place for it to drift.
+    //
+    // Section 1-only parameters are deliberately absent: machine_status, avg_shot_refill_time_sec,
+    // last_refill_epoch_sec, effective_shots_usage_kg_per_ton and the shots-breakdown /
+    // spare-health tables do not respond to any filter and live above the filter bar.
+    //
+    // "impeller_current" is a pseudo-parameter: it is not a plc_filtered_parameters row but the
+    // plc_filtered_amps_data panel. It is in this list because it is a user-facing Section 2
+    // output that the toggles switch on and off like any other.
+    public static readonly string[] Section2ParameterKeys =
+    {
+        "machine_utility_pct",
+        "production_qty_kg",
+        "energy_kwh_total",
+        "energy_per_casting_kwh_kg",
+        "blast_time_sec",
+        "cycle_count",
+        "impeller_current",
+    };
+
+    // machine_utility_pct is blast on-time ÷ MACHINE on-time. Machine on-time is the machine being
+    // powered up — blasting anything, or idle between jobs. None of that is attributable to one
+    // casting item, so under an item filter the honest answer is "not applicable" rather than a
+    // number computed over a window that necessarily includes other items' cycles.
+    private static readonly HashSet<string> ItemFilterUnsupported =
+        new(StringComparer.Ordinal) { "machine_utility_pct" };
+
+    /// <summary>
+    /// Resolves the requested parameter keys into the set actually computed.
+    /// Null/empty means "everything" — that is what pre-toggle rows and callers that omit the
+    /// field mean, and it keeps the admin API backward compatible. Unknown keys are dropped, and
+    /// under an item filter the parameters that cannot be attributed to a single item are dropped
+    /// too (the dashboard disables those toggles, but the backend must not rely on that).
+    /// </summary>
+    public static HashSet<string> ResolveSelection(string[]? requested, bool isItemFilter)
+    {
+        var selected = requested is { Length: > 0 }
+            ? new HashSet<string>(requested.Intersect(Section2ParameterKeys, StringComparer.Ordinal), StringComparer.Ordinal)
+            : new HashSet<string>(Section2ParameterKeys, StringComparer.Ordinal);
+
+        if (isItemFilter) selected.ExceptWith(ItemFilterUnsupported);
+        return selected;
+    }
+
     public async Task ComputeFilteredParametersAsync(
         int requestId,
         DateTime filterStart, DateTime filterEnd,
         string filterBy,
         int? filterCycleFrom, int? filterCycleTo,
-        string? filterMetalName)
+        string? filterMetalName,
+        string[]? selectedParameters = null)
     {
         try
         {
+            // An item filter is the only mode whose scope is not a contiguous stretch of time, so
+            // several parameters below take a different (cycle-derived) path for it.
+            bool isItemFilter = filterBy == "metal" && !string.IsNullOrWhiteSpace(filterMetalName);
+
+            var want = ResolveSelection(selectedParameters, isItemFilter);
+            if (want.Count == 0)
+            {
+                _logger.LogWarning("Request {id} selected no computable parameters — nothing to do.", requestId);
+                return;
+            }
+
+            // The cycle set is the scope definition for everything else, so it is always read.
+            // For an item filter the predicate is applied here, in SQL — every parameter below is
+            // then derived from these cycles alone, never from a time window spanning them.
             List<PlcCycle> cycles = filterBy switch
             {
                 "cycle" when filterCycleFrom.HasValue && filterCycleTo.HasValue
@@ -220,42 +297,98 @@ public class CalculationService
                 _   => await _db.GetCyclesByTimeRangeAsync(filterStart, filterEnd)
             };
 
-            DateTime windowStart = cycles.Count > 0 ? cycles.Min(c => c.BlastStart) : filterStart;
-            DateTime windowEnd   = cycles.Count > 0 ? cycles.Max(c => c.BlastEnd)   : filterEnd;
+            // ── Declared casting-item weights ────────────────────────────────────────────────
+            // Backs BOTH production_qty_kg and the energy_per_casting denominator, so it is built
+            // when either is wanted. Under an item filter only the filtered item's slots count
+            // (a cycle may declare up to 4 different items; charging this item's kWh/kg against
+            // another item's weight would understate it).
+            bool needItemWeights = want.Contains("production_qty_kg") || want.Contains("energy_per_casting_kwh_kg");
+            var itemTotals = needItemWeights
+                ? SumDeclaredItemWeights(cycles, isItemFilter ? filterMetalName : null)
+                : new Dictionary<string, double>(StringComparer.Ordinal);
+            double declaredKg = itemTotals.Values.Sum();
 
-            // Shared window parameters (blast_time_sec, machine_utility_pct, cycle_count).
-            var windowParams = await ComputeWindowParametersAsync(windowStart, windowEnd);
-            foreach (var kv in windowParams)
-                await _db.InsertFilteredParameterAsync(requestId, kv.Key, kv.Value);
-
-            // Energy comes straight from the value stored per cycle at close.
-            double totalKwh = cycles.Sum(c => c.EnergyKwh ?? 0);
-            await _db.InsertFilteredParameterAsync(requestId, "energy_kwh_total", (decimal)Math.Round(totalKwh, 3));
-
-            // Section 2 reports production per declared casting metal, not from the Tonnage
-            // accumulator (that is Section 1's job). The energy-per-casting denominator therefore
-            // uses the same declared-weight total, so "per casting kg" means the same thing as the
-            // per-metal table shown next to it.
-            var metalTotals  = SumDeclaredMetalWeights(cycles);
-            double declaredKg = metalTotals.Values.Sum();
-
-            double energyPerCasting = declaredKg > 0 ? totalKwh / declaredKg : 0;
-            await _db.InsertFilteredParameterAsync(requestId, "energy_per_casting_kwh_kg", (decimal)Math.Round(energyPerCasting, 4));
-
-            // Shots breakdown table for the window.
-            var breakdown = await ComputeShotsBreakdownAsync(windowStart, windowEnd);
-            foreach (var (ts, count) in breakdown)
-                await _db.InsertFilteredShotsBreakdownAsync(requestId, ts, count);
-
-            // Per-cycle breakdown + per-metal declared-weight totals.
-            if (cycles.Count > 0)
+            if (want.Contains("production_qty_kg"))
             {
-                await ComputePerCycleDataAsync(requestId, cycles);
-                foreach (var kv in metalTotals)
+                // Section 2 production is the sum of DECLARED casting-item weights, not the
+                // Tonnage accumulator (that is Section 1's, and the two deliberately differ).
+                await _db.InsertFilteredParameterAsync(
+                    requestId, "production_qty_kg", (decimal)Math.Round(declaredKg, 2));
+
+                foreach (var kv in itemTotals)
                     await _db.InsertFilteredMetalProductionAsync(requestId, kv.Key, (decimal)Math.Round(kv.Value, 2));
             }
 
-            _logger.LogDebug("Filtered parameters stored for request {id} ({n} cycles)", requestId, cycles.Count);
+            // ── Energy ──────────────────────────────────────────────────────────────────────
+            if (want.Contains("energy_kwh_total") || want.Contains("energy_per_casting_kwh_kg"))
+            {
+                // Straight from the value stored per cycle at close — no amp re-query.
+                double totalKwh = cycles.Sum(c => c.EnergyKwh ?? 0);
+
+                if (want.Contains("energy_kwh_total"))
+                    await _db.InsertFilteredParameterAsync(
+                        requestId, "energy_kwh_total", (decimal)Math.Round(totalKwh, 3));
+
+                if (want.Contains("energy_per_casting_kwh_kg"))
+                {
+                    double energyPerCasting = declaredKg > 0 ? totalKwh / declaredKg : 0;
+                    await _db.InsertFilteredParameterAsync(
+                        requestId, "energy_per_casting_kwh_kg", (decimal)Math.Round(energyPerCasting, 4));
+                }
+            }
+
+            // ── Blast time / utility / cycle count ──────────────────────────────────────────
+            if (isItemFilter)
+            {
+                // Cycle-derived: the matching cycles need not be contiguous in time, so replaying
+                // an event window between the first and last of them would sweep in every other
+                // item's cycles that happen to fall in between.
+                if (want.Contains("blast_time_sec"))
+                {
+                    double blastSec = cycles.Sum(c => Math.Max((c.BlastEnd - c.BlastStart).TotalSeconds, 0));
+                    await _db.InsertFilteredParameterAsync(
+                        requestId, "blast_time_sec", (decimal)Math.Round(blastSec, 1));
+                }
+
+                if (want.Contains("cycle_count"))
+                    await _db.InsertFilteredParameterAsync(requestId, "cycle_count", cycles.Count);
+            }
+            else
+            {
+                // Time and cycle filters DO describe a contiguous span, so the event replay stays —
+                // it correctly counts blast seconds at the window edges that no completed cycle row
+                // covers. Each query below is skipped when nothing selected needs it.
+                DateTime windowStart = cycles.Count > 0 ? cycles.Min(c => c.BlastStart) : filterStart;
+                DateTime windowEnd   = cycles.Count > 0 ? cycles.Max(c => c.BlastEnd)   : filterEnd;
+
+                var windowParams = await ComputeWindowParametersAsync(windowStart, windowEnd, want);
+                foreach (var kv in windowParams)
+                    await _db.InsertFilteredParameterAsync(requestId, kv.Key, kv.Value);
+            }
+
+            // ── Per-cycle rows ──────────────────────────────────────────────────────────────
+            // plc_filtered_cycle_data backs the four per-cycle graphs, the Excel "Cycles" sheet and
+            // the JOIN behind the amps panel, so it is written when any of those is in scope. If
+            // only machine_utility_pct / production_qty_kg were selected it is skipped entirely.
+            bool needCycleRows =
+                want.Contains("energy_kwh_total")          || want.Contains("energy_per_casting_kwh_kg") ||
+                want.Contains("blast_time_sec")            || want.Contains("cycle_count")               ||
+                want.Contains("impeller_current");
+
+            if (cycles.Count > 0)
+            {
+                if (needCycleRows)
+                    await ComputePerCycleDataAsync(requestId, cycles);
+
+                // The single most expensive Section 2 query (an AVG over dense 1 Hz current rows),
+                // so the toggle saving the most work is this one.
+                if (want.Contains("impeller_current"))
+                    await _db.InsertFilteredAmpsDataAsync(requestId, cycles);
+            }
+
+            _logger.LogDebug(
+                "Filtered parameters stored for request {id} ({n} cycles, {k} of {total} parameters)",
+                requestId, cycles.Count, want.Count, Section2ParameterKeys.Length);
         }
         catch (Exception ex)
         {
@@ -264,51 +397,64 @@ public class CalculationService
         }
     }
 
-    // Shared window parameters, identical for the filtered window: replays the (bounded) event
-    // stream for the window — acceptable here because Section 2 is user-triggered and windowed.
-    private async Task<Dictionary<string, decimal?>> ComputeWindowParametersAsync(DateTime start, DateTime end)
+    // Shared window parameters for time and cycle filters: replays the (bounded) event stream for
+    // the window — acceptable here because Section 2 is user-triggered and windowed.
+    //
+    // Only the queries the selection actually needs are issued. The Blast ON/OFF read is shared by
+    // all three parameters (it is the utility numerator as well as its own), so it runs when any
+    // one of them is wanted; the separate Machine status read runs only for machine_utility_pct.
+    private async Task<Dictionary<string, decimal?>> ComputeWindowParametersAsync(
+        DateTime start, DateTime end, HashSet<string> want)
     {
         var result = new Dictionary<string, decimal?>();
+
+        bool needBlast = want.Contains("blast_time_sec")
+                      || want.Contains("cycle_count")
+                      || want.Contains("machine_utility_pct");
+        if (!needBlast) return result;
 
         var blastRecords = await _db.GetStateChangesAsync(TAG_BLAST, start, end);
 
         double blastSec = ComputeOnTimeSeconds(blastRecords, start, end,
             isOn: v => v == "1" || v?.ToLower() == "true");
-        result["blast_time_sec"] = (decimal)Math.Round(blastSec, 1);
 
-        DateTime machineStart = blastRecords.Count > 0 ? blastRecords[0].Timestamp : start;
-        double machineOnSec = await ComputeMachineOnTimeSecondsAsync(machineStart, end);
-        double machineUtility = machineOnSec > 0 ? Math.Min(blastSec / machineOnSec * 100.0, 100.0) : 0;
-        result["machine_utility_pct"] = (decimal)Math.Round(machineUtility, 2);
+        if (want.Contains("blast_time_sec"))
+            result["blast_time_sec"] = (decimal)Math.Round(blastSec, 1);
 
-        result["cycle_count"] = (decimal)CountRisingEdges(blastRecords);
+        if (want.Contains("machine_utility_pct"))
+        {
+            DateTime machineStart = blastRecords.Count > 0 ? blastRecords[0].Timestamp : start;
+            double machineOnSec = await ComputeMachineOnTimeSecondsAsync(machineStart, end);
+            double machineUtility = machineOnSec > 0 ? Math.Min(blastSec / machineOnSec * 100.0, 100.0) : 0;
+            result["machine_utility_pct"] = (decimal)Math.Round(machineUtility, 2);
+        }
+
+        if (want.Contains("cycle_count"))
+            result["cycle_count"] = (decimal)CountRisingEdges(blastRecords);
 
         return result;
     }
 
     // Per-cycle breakdown (plc_filtered_cycle_data): production_kg and energy_kwh are read
-    // from the cycle rows; shots_usage = refill weight consumed in the cycle ÷ production.
+    // straight from the cycle rows. Batched into one round trip regardless of cycle count.
     private async Task ComputePerCycleDataAsync(int requestId, List<PlcCycle> cycles)
     {
-        foreach (var cycle in cycles)
-        {
-            double production = cycle.ProductionKg ?? 0;
-            double energyKwh  = cycle.EnergyKwh ?? 0;
+        var rows = cycles
+            .Select(cycle => (
+                Cycle: cycle,
+                ProductionKg: (decimal)Math.Round(cycle.ProductionKg ?? 0, 2),
+                EnergyKwh: (decimal)Math.Round(cycle.EnergyKwh ?? 0, 3)))
+            .ToList();
 
-            double refillInCycle = await ComputeTotalRefillWeightAsync(cycle.BlastStart, cycle.BlastEnd);
-            double shotsUsage    = production > 0 ? refillInCycle / production : 0;
-
-            await _db.InsertFilteredCycleDataAsync(
-                requestId, cycle,
-                (decimal)Math.Round(production, 2),
-                (decimal)Math.Round(energyKwh,  3),
-                (decimal)Math.Round(shotsUsage, 4));
-        }
+        await _db.InsertFilteredCycleDataBatchAsync(requestId, rows);
     }
 
-    // Section 2 production per casting metal: the SUM OF DECLARED WEIGHTS for each metal name
-    // across the in-scope cycles. This is what the plant declared it cast, grouped by metal —
+    // Section 2 production per casting item: the SUM OF DECLARED WEIGHTS for each item name
+    // across the in-scope cycles. This is what the plant declared it cast, grouped by item —
     // it is not derived from the Tonnage accumulator at all.
+    //
+    // (The DB columns and PLC tags still say "metal" — only the dashboard's wording changed to
+    // "item". See README "Casting item vs casting metal".)
     //
     // Consequence worth knowing: this total need not equal the measured Tonnage delta for the
     // same window (declared vs actual). Section 1's production_qty_kg remains the raw Tonnage
@@ -317,9 +463,13 @@ public class CalculationService
     // A slot only contributes when it carries a weight > 0. A weight declared with a blank name
     // is attributed to 'unspecified'; a cycle that declared nothing contributes nothing rather
     // than inventing a figure for it.
-    private static Dictionary<string, double> SumDeclaredMetalWeights(List<PlcCycle> cycles)
+    //
+    // onlyItem scopes the sum to a single declared item. A cycle can declare up to 4 items, so a
+    // cycle selected because it contains "Aluminium" may also carry "Iron" — under an item filter
+    // that other weight must not land in this item's production or in its kWh/kg denominator.
+    private static Dictionary<string, double> SumDeclaredItemWeights(List<PlcCycle> cycles, string? onlyItem = null)
     {
-        var byMetal = new Dictionary<string, double>(StringComparer.Ordinal);
+        var byItem = new Dictionary<string, double>(StringComparer.Ordinal);
 
         foreach (var cycle in cycles)
         {
@@ -335,11 +485,16 @@ public class CalculationService
             {
                 if (slot.Weight <= 0) continue;
                 string name = string.IsNullOrWhiteSpace(slot.Name) ? "unspecified" : slot.Name!;
-                Accumulate(byMetal, name, slot.Weight);
+
+                // GetCyclesByMetalNameAsync matches the item name exactly, so match it the same
+                // way here — otherwise the scoped sum and the cycle set could disagree.
+                if (onlyItem != null && !string.Equals(name, onlyItem, StringComparison.Ordinal)) continue;
+
+                Accumulate(byItem, name, slot.Weight);
             }
         }
 
-        return byMetal;
+        return byItem;
     }
 
     private static void Accumulate(Dictionary<string, double> map, string key, double value)
@@ -347,48 +502,15 @@ public class CalculationService
         map[key] = (map.TryGetValue(key, out var cur) ? cur : 0) + value;
     }
 
-    // #7 shots breakdown — for each consecutive pair of actual refill events, count blast
-    // rising edges between them. Returns (refill_timestamp, blast_count) pairs.
-    private async Task<List<(DateTime RefillTimestamp, int BlastCount)>> ComputeShotsBreakdownAsync(
-        DateTime start, DateTime end)
-    {
-        var refillRecords = (await _db.GetStateChangesAsync(TAG_SHOT_REFILL, start, end))
-            .Where(r => r.StorageReason == "COV" || r.StorageReason == "VALUE_CHANGE" || r.StorageReason == "STATE_CHANGE")
-            .ToList();
-        var blastRecords = await _db.GetStateChangesAsync(TAG_BLAST, start, end);
-
-        var result = new List<(DateTime RefillTimestamp, int BlastCount)>();
-        for (int i = 1; i < refillRecords.Count; i++)
-        {
-            DateTime prevRefill = refillRecords[i - 1].Timestamp;
-            DateTime currRefill = refillRecords[i].Timestamp;
-            int blastCount = blastRecords.Count(r =>
-                r.Timestamp > prevRefill &&
-                r.Timestamp <= currRefill &&
-                (r.Value == "1" || r.Value?.ToLower() == "true") &&
-                (r.PreviousValue == "0" || r.PreviousValue?.ToLower() == "false" || r.PreviousValue == null));
-            result.Add((currRefill, blastCount));
-        }
-
-        return result;
-    }
+    // The Section 2 shots breakdown was removed: shot refills are a machine-level, Section 1 fact
+    // that does not respond to a filter (a refill interval spans whatever cycles happen to fall in
+    // it, mixing items), so the "Blast Cycles per Refill Interval" chart now lives only in Section 1
+    // above the filter bar. Section 1's incremental FoldRefillAsync above is untouched.
 
     private async Task<double> ComputeMachineOnTimeSecondsAsync(DateTime start, DateTime end)
     {
         var records = await _db.GetStateChangesAsync(TAG_MACHINE_ST, start, end);
         return ComputeOnTimeSeconds(records, start, end, isOn: v => v != null && v != "0");
-    }
-
-    private async Task<double> ComputeTotalRefillWeightAsync(DateTime start, DateTime end)
-    {
-        var records = await _db.GetStateChangesAsync(TAG_SHOT_REFILL, start, end);
-        double total = 0;
-        foreach (var r in records)
-        {
-            double val = ParseDouble(r.Value);
-            if (val > 0) total += val;
-        }
-        return total;
     }
 
     // ════════════════════════════════════════════════════════════════════════

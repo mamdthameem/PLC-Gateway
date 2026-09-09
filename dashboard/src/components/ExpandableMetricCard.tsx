@@ -13,10 +13,16 @@ interface Props {
   updatedAt?: string;
   graphTitle?: string;
   renderGraph?: () => React.ReactNode;
+  /**
+   * Section 2 tiles pass this so a parameter whose meaning differs between the sections picks up
+   * PARAM_META.section2Subtitle instead of the Section 1 wording. Both sections are on screen at
+   * once now, so "Production" appears twice with two different formulas behind it.
+   */
+  section?: 1 | 2;
 }
 
 export default function ExpandableMetricCard({
-  parameterName, value, updatedAt, graphTitle, renderGraph,
+  parameterName, value, updatedAt, graphTitle, renderGraph, section = 1,
 }: Props) {
   const [open, setOpen] = useState(false);
 
@@ -29,6 +35,7 @@ export default function ExpandableMetricCard({
 
   const meta      = PARAM_META[parameterName];
   const label     = meta?.label ?? parameterName;
+  const subtitle  = (section === 2 ? meta?.section2Subtitle : undefined) ?? meta?.subtitle;
   const formatted = formatParameterValue(parameterName, value);
   const isStatus  = parameterName === 'machine_status';
   const isOn      = value === '1';
@@ -94,6 +101,15 @@ export default function ExpandableMetricCard({
             sx={{ fontSize: '1.3rem', color: 'text.primary', lineHeight: 1.2, mt: 0.5 }}
           >
             {formatted}
+          </Typography>
+        )}
+
+        {subtitle && (
+          <Typography
+            variant="caption"
+            sx={{ color: 'text.secondary', fontSize: '0.65rem', lineHeight: 1.35, mt: 0.25 }}
+          >
+            {subtitle}
           </Typography>
         )}
 

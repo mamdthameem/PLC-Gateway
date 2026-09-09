@@ -15,5 +15,4 @@ public class FilteredCycleDto
     public double? Metal4WeightKg { get; set; }
     public double ProductionKg { get; set; }
     public double EnergyKwh { get; set; }
-    public double ShotsUsage { get; set; }
 }

@@ -54,7 +54,8 @@ public class FilteredCalculationService : BackgroundService
                             request.FilterBy,
                             request.FilterCycleFrom,
                             request.FilterCycleTo,
-                            request.FilterMetalName);
+                            request.FilterMetalName,
+                            request.SelectedParameters);
 
                         await _dbService.SetRequestStatusAsync(request.Id, "done");
                         _logger.LogInformation("Request {id} completed successfully.", request.Id);

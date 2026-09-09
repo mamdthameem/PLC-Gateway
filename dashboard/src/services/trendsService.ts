@@ -1,6 +1,6 @@
 import type { DailyTrend, TrendBucket } from '../types';
 
-const API_BASE = (import.meta.env.VITE_API_URL as string) || '';
+import { API_BASE } from './apiBase';
 
 function authHeaders(): Record<string, string> {
   const token = localStorage.getItem('plc_gateway_token');

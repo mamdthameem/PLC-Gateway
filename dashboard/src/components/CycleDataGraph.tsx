@@ -19,7 +19,14 @@ interface Props {
 
 type State = 'loading' | 'done' | 'error';
 
-/** Per-cycle energy / efficiency within one filtered window. */
+/**
+ * Per-cycle energy / efficiency within one filtered window.
+ *
+ * The blast-time and cumulative-cycle-count modes were removed: those two tiles are scalar-only in
+ * both sections now, because Section 1 has no plc_daily_trends column to plot them from and the
+ * section-to-section asymmetry was more confusing than the charts were worth. Their per-cycle
+ * detail is still on screen in Section 2's Cycle Breakdown table.
+ */
 export default function CycleDataGraph({ mode, requestId }: Props) {
   const [cycles, setCycles] = useState<FilteredCycle[]>([]);
   const [state, setState]   = useState<State>('loading');
@@ -80,6 +87,7 @@ export default function CycleDataGraph({ mode, requestId }: Props) {
     );
   }
 
+  // efficiency
   const chartData = visible.map(c => ({
     cycle: c.cycleNumber,
     kwPerKg: c.productionKg > 0 ? parseFloat((c.energyKwh / c.productionKg).toFixed(4)) : 0,

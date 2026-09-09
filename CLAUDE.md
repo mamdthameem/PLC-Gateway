@@ -57,12 +57,13 @@ Industry project. A single **unified ASP.NET Core (.NET 10) application** hosted
 | `plc_lifetime_parameters`      | Backend writes, Dashboard reads     | Section 1 scalar parameters (1 row per param)                          |
 | `plc_shots_breakdown`          | Backend writes, Dashboard reads     | Section 1 shots/refill breakdown table (upsert keyed on refill_timestamp) |
 | `plc_cycles`                   | Backend                             | One row per completed blast cycle                                      |
-| `calculation_requests`         | Dashboard writes, Backend processes | Section 2 trigger — dashboard inserts here                             |
+| `calculation_requests`         | Dashboard writes, Backend processes | Section 2 trigger — dashboard inserts here. `selected_parameters TEXT[]` carries the per-parameter toggles (NULL = all) |
 | `plc_filtered_parameters`      | Backend writes, Dashboard reads     | Section 2 scalar results per request                                   |
 | `plc_filtered_cycle_data`      | Backend writes, Dashboard reads     | Section 2 per-cycle breakdown per request                              |
-| `plc_filtered_shots_breakdown` | Backend writes, Dashboard reads     | Section 2 shots breakdown per request                                  |
+| `plc_filtered_shots_breakdown` | **Retired — nothing writes it**     | Was the Section 2 shots breakdown. Shots are Section 1 only now; existing rows kept, never dropped |
 | `plc_spare_status`             | Backend                             | 140 rows — spare health per impeller per spare                         |
-| `plc_filtered_metal_production`| Backend writes, Dashboard reads     | Section 2 production split per casting metal (proportional by weight)  |
+| `plc_filtered_metal_production`| Backend writes, Dashboard reads     | Section 2 production per declared casting item (summed declared weights). Column says metal, UI says item |
+| `plc_filtered_amps_data`       | Backend writes, Dashboard reads     | Section 2 per-cycle average impeller current per request (`AVG(value_num)` per cycle×impeller) |
 | `plc_aggregation_state`        | Backend                             | Single row — incremental Section 1 watermark + running totals          |
 | `plc_daily_trends`            | Backend writes, Dashboard reads      | **Derived** daily rollup (one row per day) powering the all-time graphs. Rebuildable; never a substitute for Tier 2 |
 | `gateway_status`               | Backend                             | Single row — PLC connection state (`plc_connected`, `last_scan_at`)    |
@@ -83,7 +84,7 @@ Industry project. A single **unified ASP.NET Core (.NET 10) application** hosted
 | `CovDetectionService`        | per tag    | ≥2% relative (analogs), **absolute** deadband (accumulators), state-change (BOOL); 60 s heartbeat for core tags |
 | `AggregationService`         | 1 min      | Calls `ComputeLifetimeParametersAsync()` — **incremental/watermarked** → `plc_lifetime_parameters` + `plc_shots_breakdown`; then refreshes `plc_daily_trends` for **yesterday + today only** (bounded work per pass) |
 | `CycleTrackingService`       | 2s         | Falling edge on `Blast ON/OFF` → reads Tier 1 for metal/tonnage → writes `plc_cycles` (with computed `production_kg`, `energy_kwh`) |
-| `FilteredCalculationService` | 5s poll    | Picks up pending `calculation_requests`, runs all Section 2 calculations + per-metal split |
+| `FilteredCalculationService` | 5s poll    | Picks up pending `calculation_requests`, computes **only the parameters the request selected** + per-item production split |
 | `SpareMonitoringService`     | 10s        | Reads 140 trigger/runhour/replaced tags → upserts `plc_spare_status` (skips while PLC disconnected) |
 | `LicenseCheckService`        | 60 min     | Cloud license check with grace period; on expiry locks the data API/dashboard (recording continues) |
 | `CalculationService`         | shared lib | Math: `ComputeLifetimeParametersAsync` (incremental), `ComputeFilteredParametersAsync`      |
@@ -111,7 +112,9 @@ Industry project. A single **unified ASP.NET Core (.NET 10) application** hosted
 | `energy_per_casting_kwh_kg` | `energy_kwh_total ÷ production_qty_kg`                                              | derived                                                |
 | `blast_time_sec`            | Total seconds where `Blast ON/OFF = true`                                           | `Blast ON/OFF` Tier 2                                  |
 | `cycle_count`               | Rising edges `0→1` on `Blast ON/OFF`                                                | `Blast ON/OFF` Tier 2                                  |
+| `avg_shot_refill_time_sec`  | Elapsed time since first refill ÷ refill count                                      | `Refil shots weight` Tier 2                            |
 | `last_refill_epoch_sec`     | Unix epoch of latest `Refil shots weight` change                                    | `Refil shots weight` Tier 2                            |
+| `effective_shots_usage_kg_per_ton` | `total_refill_weight_kg ÷ (production_qty_kg ÷ 1000)` (both cumulative since commissioning). **kg/T — lower is better.** `—` when production is 0 | `Tonnage`, `Refil shots weight` Tier 2 |
 
 
 
@@ -132,7 +135,7 @@ Output: `(refill_timestamp, blast_count)`. Maintained by the incremental engine 
 | `energy_kwh_total`  | `Σ plc_cycles.energy_kwh` over in-scope cycles                                       |
 | `energy_per_casting_kwh_kg` | `energy_kwh_total ÷ (total declared metal weight)` — same denominator as the per-metal table, so "per casting kg" means one thing in Section 2 |
 | `machine_status`    | Not included                                                                        |
-| `production_qty_kg`, `avg_shot_refill_time_sec`, `last_refill_epoch_sec` | Not included |
+| `avg_shot_refill_time_sec`, `last_refill_epoch_sec`, `effective_shots_usage_kg_per_ton`, shots breakdown | Not included — Section 1 only, does not respond to any filter. (`production_qty_kg` IS in Section 2, with a different formula — see below) |
 
 
 > **Section 1 vs Section 2 production is a deliberate split.** Section 1 = the PLC's `Tonnage` accumulator (what the machine measured). Section 2 = declared casting-metal weights (what the plant said it cast, per metal). These can legitimately disagree for the same window; neither is "wrong". A slot only counts when its weight > 0; a weight with a blank name lands in `unspecified`; a cycle declaring nothing contributes nothing.
@@ -147,7 +150,6 @@ Output: `(refill_timestamp, blast_count)`. Maintained by the incremental engine 
 | --------------- | ---------------------------------------------------------- |
 | `production_kg` | `tonnage_kg(this cycle) − tonnage_kg(prev cycle)`, floor 0 |
 | `energy_kwh`    | `avg_amps_all_impellers × cycle_duration_hours`            |
-| `shots_usage`   | `refill_weight_in_cycle ÷ production_kg`                   |
 
 
 
@@ -175,7 +177,7 @@ Cards are sorted by `PARAM_ORDER` in `dashboard/src/utils/unitConverters.ts`, **
 
 `machine_status` → `machine_utility_pct` → `production_qty_kg` → `energy_kwh_total` →
 `energy_per_casting_kwh_kg` → `blast_time_sec` → `cycle_count` → `avg_shot_refill_time_sec` →
-`last_refill_epoch_sec`
+`last_refill_epoch_sec` → `effective_shots_usage_kg_per_ton`
 
 `machine_status` is rendered by `MachineStatusTile` above the grid (it also carries the PLC link
 state), so it is filtered out of the grid itself.
@@ -186,12 +188,17 @@ state), so it is filtered out of the grid itself.
 
 | Card | Section 1 graph | Section 2 graph |
 | ---- | --------------- | --------------- |
-| `machine_utility_pct` | All-time utility, `/api/trends` (month buckets) | Time filter only — hourly/daily buckets for the window. **Not offered for cycle/metal filters** (those set `filter_start`/`filter_end` to `NOW()` placeholders, so there is no meaningful time axis) |
-| `production_qty_kg` | All-time production: bars = produced per bucket, line = cumulative `Tonnage` | n/a — Section 2 shows the per-metal table instead |
+| `machine_utility_pct` | All-time utility, `/api/trends` (month buckets) | Time filter only — hourly/daily buckets for the window. **Not offered for cycle/item filters**, and its toggle is disabled entirely under an item filter (those set `filter_start`/`filter_end` to `NOW()` placeholders, so there is no meaningful time axis) |
+| `production_qty_kg` | All-time production: bars = produced per bucket, line = cumulative `Tonnage` | **Bar chart of declared weight per casting item** (`ItemProductionGraph`, from `plc_filtered_metal_production`). The scalar is the total of those bars — a different formula from Section 1's, by design |
 | `energy_kwh_total` | All-time energy per bucket, `/api/trends` | Per-cycle bars (`plc_filtered_cycle_data`) |
 | `energy_per_casting_kwh_kg` | All-time kWh/kg per bucket | Per-cycle line |
-| Amps tile (×10) | Per-impeller trace for the last completed cycle | n/a |
-| "Blast Cycles per Refill Interval" | Bar chart of `plc_shots_breakdown` — one bar per refill, height = blast cycles until the next refill | Same, scoped to the filter, plus a table |
+| `blast_time_sec` | n/a — no rollup column, scalar only | **n/a — scalar only.** Section 2 could plot it per cycle, but the asymmetry with Section 1 was more confusing than the chart was useful. Per-cycle detail is in the Cycle Breakdown table |
+| `cycle_count` | n/a — no rollup column, scalar only | **n/a — scalar only**, same reason as `blast_time_sec`. The cycles themselves are listed in the Cycle Breakdown table |
+| Amps tile (×10) | Per-impeller trace for the last completed cycle | Same tile/dialog layout, driven by the FilterBar (all three modes, incl. custom range): tile shows a duration-weighted average current for the filter's cycles (`plc_filtered_amps_data`), dialog chart is one point per cycle (`AVG(value_num)` in that cycle's blast window) instead of raw per-second samples |
+| "Blast Cycles per Refill Interval" | Bar chart of `plc_shots_breakdown` — one bar per refill, height = blast cycles until the next refill | **n/a — removed from Section 2.** A refill interval spans whatever cycles fall in it, mixing items, so no filter scopes it meaningfully. Section 1 only, above the filter bar |
+
+`effective_shots_usage_kg_per_ton` has no graph in either section — no `plc_daily_trends` rollup
+column backs it, and it is Section 1 only.
 
 **All graph math is server-side.** The dashboard plots `/api/trends` values verbatim — the same
 rule the cloud mirror follows. The old browser-side `utilityCompute.ts` was deleted with the
@@ -207,9 +214,32 @@ Bucket granularity is chosen by window span (`dashboard/src/utils/trendBuckets.t
 
 ### Removed
 
-- **"Effective Shots Usage" tile** — deleted. It showed the blast count of the most recent refill
-  interval labelled as a "usage", which clashed with Section 2's real `shots_usage` (kg/kg). The
-  "Blast Cycles per Refill Interval" chart already shows that number for every interval.
+- **"Effective Shots Usage" tile (original, pre-2026-08 version)** — deleted. It showed the blast
+  count of the most recent refill interval labelled as a "usage" (a cycle count, not a ratio),
+  which clashed with Section 2's `shots_usage` column at the time. The "Blast Cycles per Refill
+  Interval" chart already shows that number for every interval.
+- **Section 2's per-cycle `shots_usage`** (`refill_weight_in_cycle ÷ production_kg`) — also
+  removed. Refills don't align to cycle boundaries, so a per-cycle ratio wasn't meaningful.
+  Replaced by a new Section 1 scalar of the same display name — a different formula and different
+  units. Do not conflate the "Effective Shots Usage" tiles across time; there have now been
+  **three** distinct things under that name:
+
+  | Era | Meaning | Unit | Direction |
+  | --- | ------- | ---- | --------- |
+  | pre-2026-08 | blast count of the most recent refill interval | cycles | — |
+  | 2026-08 | `production_qty_kg ÷ total_refill_weight_kg` | kg/kg | higher better |
+  | **current** (`effective_shots_usage_kg_per_ton`) | `total_refill_weight_kg ÷ (production_qty_kg ÷ 1000)` | **kg/T** | **lower better** |
+
+- **Section 2's "Parameters" table** — the two-column Parameter/Value table that only restated the
+  tiles above it. That duplication was the reason to remove it.
+
+  The two tables that carry data the tiles do **not** are kept: **Production by Casting Item** (the
+  per-item split behind the single Production total) and **Cycle Breakdown** (what each individual
+  cycle contributed, and which items it declared). The test for whether a Section 2 table stays is
+  "does it show something the tiles cannot" — not "is it a table".
+- **Section 2's shots breakdown**, in full — computation, `/api/filter/{id}/shots`,
+  `fetchFilterShots`, `section2.shotsBreakdown` in the admin API, and the Excel "Shots Breakdown"
+  sheet. It is a Section 1 fact only.
 
 
 ### PLC disconnected
@@ -252,7 +282,7 @@ their values are last-known and not advancing. Recording continues regardless.
 | ------------------ | -------------------------------------- |
 | `'time'` (default) | `filter_start`, `filter_end`           |
 | `'cycle'`          | `filter_cycle_from`, `filter_cycle_to` |
-| `'metal'`          | `filter_metal_name`                    |
+| `'metal'`          | `filter_metal_name` — **displayed as "Item"**. Scopes every selected parameter to only the matching cycles; `machine_utility_pct` is disabled in this mode |
 
 
 `filter_start` and `filter_end` are NOT NULL — always required. Pass `NOW()` as placeholder when using cycle or metal filter.
@@ -296,10 +326,12 @@ Thresholds (spare_index 0–13, hours): 100, 300, 300, 600, 2000, 2000, 300, 200
 | `PLCGateway/PlcService.cs`                 | S7.NetPlus wrapper — `ReadRegion`, reserved `Write`                       |
 | `PLCGateway/CovDetectionService.cs`        | COV logic (relative/absolute deadband, state-change)                     |
 | `PLCGateway/Models/*.cs`                   | `PlcCycle`, `CalculationRequest`, `AggregationState`, `ScanWrites`, …     |
-| `PLCGateway/Api/Controllers/*.cs`          | Dashboard API + `AuthController` (JWT) + `AdminController` (cloud pulls) + `TrendsController` (graph series) |
+| `PLCGateway/Api/Controllers/*.cs`          | Dashboard API + `AuthController` (JWT) + `AdminController` (cloud pulls: `live`, `trends`, `filter`, `history`) + `TrendsController` (local dashboard's graph series, JWT-protected) |
 | `PLCGateway/Api/Services/*.cs`             | API data services (typed reads), `TrendsService` (all graph math), `UserService`, `LicenseState` |
 | `dashboard/src/utils/trendBuckets.ts`      | Graph bucket granularity selection (hour/day/month)                       |
-| `dashboard/src/utils/exportFilteredExcel.ts` | Section 2 → 4-sheet .xlsx export (write-only; never parses a workbook)   |
+| `dashboard/src/utils/exportFilteredExcel.ts` | Section 2 → 3-sheet .xlsx export (Parameters / Item Production / Cycles). Reads the FETCHED dataset, never a rendered table — which is why removing the tables left it working. Write-only; never parses a workbook |
+| `dashboard/src/components/ItemProductionGraph.tsx` | Section 2 production tile's graph — declared weight per casting item (replaced the per-metal table) |
+| `dashboard/src/components/FilterBar.tsx`    | Filter mode tabs + per-parameter toggles (Select All / Clear All); stays usable while a filter is applied |
 | `dashboard/src/utils/usePlcConnection.ts`  | Shared PLC-link poll behind the amps + spares staleness banners            |
 | `PLCGateway/Api/Middleware/*.cs`           | `AdminGuardMiddleware` (IP+key), `LicenseLockMiddleware` (402 when locked) |
 | `dashboard/`                               | **Dashboard source** (Vite + React + TS), vendored in-repo. `npm run build` emits into `PLCGateway/wwwroot` (same-origin). |
@@ -313,16 +345,63 @@ Thresholds (spare_index 0–13, hours): 100, 300, 300, 600, 2000, 2000, 300, 200
 
 
 
+## Latest revision — six changes (see README for the full reference)
+
+1. **Layout split by whether a parameter has a filtered equivalent.** Above the filter bar: the
+   Section 1-ONLY parameters (`machine_status`, `avg_shot_refill_time_sec`,
+   `last_refill_epoch_sec`, `effective_shots_usage_kg_per_ton`, shots-per-refill chart, spare
+   health) — none of them is repeated below. Below the filter bar: the parameters that exist in
+   BOTH sections (`machine_utility_pct`, `production_qty_kg`, `energy_kwh_total`,
+   `energy_per_casting_kwh_kg`, `blast_time_sec`, `cycle_count`, impeller current), showing their
+   Section 1 real-time values until a filter is applied and their Section 2 values after.
+   Key lists: `SECTION1_ONLY_PARAM_KEYS` / `SHARED_PARAM_KEYS`; `LifetimeSection` is rendered twice.
+   **Nothing is computed until Apply is pressed** — no `calculation_requests` row on page load.
+   The old `if (filterApplied) hide Section 1` ternary is deleted, and the sections share no fetch,
+   cache key or state slice.
+2. **`effective_shots_usage` → `effective_shots_usage_kg_per_ton`.** Inverted and rescaled:
+   `total_refill_weight_kg ÷ (production_qty_kg ÷ 1000)`, unit kg/T, **lower is better**, null
+   guard moved to production. `migration.sql` deletes the stale row. `production_qty_kg` itself is
+   unchanged (still raw `Tonnage`) — the commissioning-baseline idea was investigated and
+   deliberately not built; see README.
+3. **"Metal" → "Item" in the dashboard UI only.** PLC tag names, `appsettings.json` keys, DB
+   columns, C# models, DTOs, TypeScript types and API routes/fields all still say `metal`. Rule:
+   if a user reads it, it says *item*; if a machine reads it, it says *metal*.
+4. **Per-parameter calculation toggles.** `calculation_requests.selected_parameters TEXT[]`
+   (`NULL` = all). Unselected parameters are never computed. Single source of truth for the key
+   list: `CalculationService.Section2ParameterKeys`, mirrored in `SECTION2_PARAM_KEYS`.
+5. **Item filter genuinely scopes.** `blast_time_sec` and `cycle_count` become cycle-derived under
+   an item filter (the window replay leaked other items' cycles); declared-weight sums count only
+   the filtered item. `machine_utility_pct` is disabled under an item filter — machine on-time is
+   not attributable to one item.
+6. **Section 2 = tiles + graphs + the two data tables.** Removed only the "Parameters" table,
+   which restated the tiles above it. **Production by Casting Item** and **Cycle Breakdown** stay —
+   they carry data the tiles cannot. New Section 2 scalar `production_qty_kg` (Σ declared item
+   weight) with a per-item bar graph sits above the item table. Excel export reads the fetched
+   dataset, not the tables.
+
+**Removed in this revision:** `GET /api/filter/{id}/shots`, `IFilterService.GetShotsBreakdownAsync`,
+`section2.shotsBreakdown` in the admin API, `CalculationService.ComputeShotsBreakdownAsync`,
+`fetchFilterShots`, the Excel "Shots Breakdown" sheet. The shots breakdown is Section 1 only — it
+does not respond to a filter. `plc_filtered_shots_breakdown` is left in place, unwritten.
+
+**Two cloud-contract breaks** (documented in `CONTRACT-admin-api.md`): the renamed lifetime key and
+the removed `section2.shotsBreakdown`.
+
+---
+
 ## Resolved client decisions (do not reopen without the client)
 
 - **Energy formula — settled.** The client confirmed the PLC delivers energy as a correct value, so **no conversion formula is applied**. `energy_kwh_total` and per-cycle `energy_kwh` stay as `Σ(avg_amps × duration_hours)`. The unused `EnergyCalculation` config block (SupplyVoltageV / PowerFactor / ActiveImpellerCount) was **removed** — it was referenced by no code.
 - **`Refil shots weight` — settled as `DINT`.** `appsettings.json` is authoritative; docs corrected to match.
 - **Empty casting metal slot — settled.** `CycleTrackingService` trims names and normalises blanks to `NULL` at recording time, so an empty slot is always `null`, never `""`.
 - **Section 2 production — settled.** Section 2 reports production **per declared casting metal** (sum of `Casting metal N weight` grouped by name), *not* from `Tonnage`. Section 1 keeps `Tonnage`. The two intentionally answer different questions and need not reconcile.
+- **`shots_usage` — settled as Section 1 only, cumulative.** Section 2's per-cycle `shots_usage` (`refill_weight_in_cycle ÷ production_kg`) was removed because refills don't align to cycle boundaries. A new Section 1 scalar, `effective_shots_usage` (`production_qty_kg ÷ total_refill_weight_kg`, both cumulative since commissioning), replaces it with a genuinely meaningful ratio. Do not reintroduce a per-cycle version.
+- **Admin API auth — settled as key-only, no IP allowlist.** The cloud caller runs on Firebase Cloud Functions, which has no fixed egress IP on the current plan, so an IP gate can never pass. `AdminGuardMiddleware` checks `X-Api-Key` only.
 
 ## Pending items
 
-- **Cloud `/api/admin/*` contract** — needs a broader pass; `plc_filtered_metal_production` is deliberately **not** yet exposed to the cloud, so `CONTRACT-admin-api.md` and `sample-response.json` are unchanged.
+- ~~Cloud `/api/admin/*` contract needs a broader pass~~ — **done.** `AdminController` now exposes three endpoints: `GET /api/admin/live` (extended: `section2.metals[]` added), `GET /api/admin/trends` (new — whole-history graph series, same rollup logic as the local `/api/trends`, behind `AdminGuardMiddleware` instead of JWT), `POST /api/admin/filter` (new — synchronous cloud-triggered Section 2 calculation, no `calculation_requests` polling wait). `CONTRACT-admin-api.md` and `sample-response.json` are current as of this pass. The metal-filter latency number in that doc is a structural argument, not a measured one — this repo's dev DB only has 5 cycles, too small to stress-test; re-benchmark before the cloud finalizes a hard timeout.
+- **Commissioning `Tonnage` baseline for `effective_shots_usage_kg_per_ton`** — investigated, **deliberately not built**. `production_qty_kg` is the PLC's own lifetime accumulator while `total_refill_weight_kg` only accumulates from gateway commissioning, so on a gateway retrofitted to a running machine the ratio under-reports shot consumption (converging as history grows). A fix means storing `baseline_tonnage_kg` + `baseline_tonnage_set` in `plc_aggregation_state`, seeding from the earliest Tier 2 `Tonnage` row, and clearing both on `--rebuild-aggregation`. **The client decided `production_qty_kg` stays as raw `Tonnage`.** Applying a baseline to only the usage denominator would leave the two tiles mutually inconsistent — settle that with the client before building it. Full write-up in README, "Effective Shots Usage".
 - **`plc_historical_data` partitioning** — recommended within a couple of years (monthly declarative partitioning, retains every row). See README "Scaling".
 - **1 Hz `BLAST_ON` current logging** — `GatewayWorker` writes 10 impeller-current rows *per second* while blast is ON, which is 60–80% of all Tier 2 rows. Coarsening it to 5–10 s would cut storage 5–10× with negligible effect on cycle-average energy, but would coarsen the per-cycle `AmpsGraph` trace. Client decision, unchanged.
 - **Recording gaps inflate the Section 1 lifetime scalars.** `FoldBlast`/`FoldMachine` in `CalculationService` accumulate the full span between consecutive events with no cap, so a multi-week gateway outage is counted as runtime. The `plc_daily_trends` rollup **does** guard against this (segments over 5 min are treated as gaps), which is why a graph bucket and the lifetime scalar can disagree after an outage. The scalar was left alone deliberately — changing it would silently move a long-standing headline number. Decide with the client before touching it.

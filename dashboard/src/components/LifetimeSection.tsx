@@ -20,6 +20,9 @@ const POLL_INTERVAL_MS = 60_000;
 // They are served from the plc_daily_trends rollup rather than raw history, which is what makes
 // "all-time" affordable: one row per day instead of ~1 M raw rows per year for the utility tags
 // alone. Passing no bounds is what selects the all-time series.
+//
+// blast_time_sec and cycle_count are absent on purpose: plc_daily_trends has no column to plot
+// either from. They are scalar-only in Section 2 as well, so the two sections match.
 const GRAPHABLE: Record<string, { title: string; render: () => React.ReactNode }> = {
   machine_utility_pct: {
     title: 'Machine Utility — all-time',
@@ -39,7 +42,27 @@ const GRAPHABLE: Record<string, { title: string; render: () => React.ReactNode }
   },
 };
 
-export const LifetimeSection: React.FC = () => {
+interface Props {
+  /**
+   * Which parameter names to render. The page shows this component twice with disjoint lists:
+   * the Section 1-only parameters above the filter bar, and the ones shared with Section 2 below
+   * it — see SECTION1_ONLY_PARAM_KEYS / SHARED_PARAM_KEYS.
+   */
+  include: readonly string[];
+  title: string;
+  subtitle: string;
+  /** The shots-per-refill chart is a Section 1-only output, so only the upper block asks for it. */
+  showShotsChart?: boolean;
+}
+
+/**
+ * A grid of Section 1 (all-time) parameter tiles, polled every 60 s.
+ *
+ * Both instances read the same `/api/lifetime` endpoint independently. That is deliberate — they
+ * are both Section 1, so there is no cross-section coupling to worry about, and the endpoint
+ * returns ten rows. Section 2 shares nothing with either of them.
+ */
+export const LifetimeSection: React.FC<Props> = ({ include, title, subtitle, showShotsChart = false }) => {
   const [params, setParams]           = useState<LifetimeParameter[]>([]);
   const [shotsData, setShotsData]     = useState<ShotsBreakdownEntry[]>([]);
   const [loading, setLoading]         = useState(true);
@@ -50,7 +73,7 @@ export const LifetimeSection: React.FC = () => {
     try {
       const [paramData, shots] = await Promise.all([
         fetchLifetimeParameters(),
-        fetchShotsBreakdown(),
+        showShotsChart ? fetchShotsBreakdown() : Promise.resolve([] as ShotsBreakdownEntry[]),
       ]);
       setParams(paramData);
       setShotsData(shots);
@@ -61,7 +84,7 @@ export const LifetimeSection: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [showShotsChart]);
 
   useEffect(() => {
     load();
@@ -69,10 +92,10 @@ export const LifetimeSection: React.FC = () => {
     return () => clearInterval(timer);
   }, [load]);
 
-  // machine_status is excluded here — MachineStatusTile renders it above this section, where it
-  // can also report the PLC link state.
+  // machine_status is excluded even when it is in `include` — MachineStatusTile renders it above
+  // this section, where it can also report the PLC link state.
   const displayParams = params
-    .filter(p => p.parameterName !== 'machine_status')
+    .filter(p => include.includes(p.parameterName) && p.parameterName !== 'machine_status')
     .sort(byParamOrder);
 
   return (
@@ -80,10 +103,10 @@ export const LifetimeSection: React.FC = () => {
       <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
         <Box>
           <Typography variant="h6" fontWeight={700} sx={{ fontSize: '1rem' }}>
-            Lifetime Parameters
+            {title}
           </Typography>
           <Typography variant="caption" color="text.secondary">
-            Cumulative since commissioning · refreshes every 60 s
+            {subtitle}
             {lastFetched && ` · last updated ${lastFetched.toLocaleTimeString()}`}
           </Typography>
         </Box>
@@ -108,7 +131,7 @@ export const LifetimeSection: React.FC = () => {
             display: 'grid',
             gridTemplateColumns: { xs: '1fr', sm: 'repeat(2,1fr)', md: 'repeat(3,1fr)', lg: 'repeat(4,1fr)' },
             gap: 2,
-            mb: 3,
+            mb: showShotsChart ? 3 : 0,
           }}
         >
           {displayParams.map(p => {
@@ -127,7 +150,7 @@ export const LifetimeSection: React.FC = () => {
         </Box>
       )}
 
-      {shotsData.length > 0 && (
+      {showShotsChart && shotsData.length > 0 && (
         <>
           <Divider sx={{ mb: 2 }} />
           <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 0.5 }}>

@@ -25,10 +25,12 @@ public class FilterService : IFilterService
             const string sql = @"
                 INSERT INTO calculation_requests
                     (filter_start, filter_end, period_label, filter_by,
-                     filter_cycle_from, filter_cycle_to, filter_metal_name)
+                     filter_cycle_from, filter_cycle_to, filter_metal_name,
+                     selected_parameters)
                 VALUES
                     (@start, @end, @label, @filterBy,
-                     @cycleFrom, @cycleTo, @metalName)
+                     @cycleFrom, @cycleTo, @metalName,
+                     @selected)
                 RETURNING id;";
 
             await using var cmd = new NpgsqlCommand(sql, conn);
@@ -39,6 +41,13 @@ public class FilterService : IFilterService
             cmd.Parameters.AddWithValue("cycleFrom", input.FilterCycleFrom  is null ? DBNull.Value : (object)input.FilterCycleFrom);
             cmd.Parameters.AddWithValue("cycleTo",   input.FilterCycleTo    is null ? DBNull.Value : (object)input.FilterCycleTo);
             cmd.Parameters.AddWithValue("metalName", input.FilterMetalName  is null ? DBNull.Value : (object)input.FilterMetalName);
+            // NULL (not an empty array) is the "all parameters" marker.
+            cmd.Parameters.Add(new NpgsqlParameter("selected", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text)
+            {
+                Value = input.SelectedParameters is { Length: > 0 }
+                    ? input.SelectedParameters
+                    : (object)DBNull.Value
+            });
 
             var id = await cmd.ExecuteScalarAsync();
             return Convert.ToInt32(id);
@@ -130,7 +139,7 @@ public class FilterService : IFilterService
                     metal_2_name, metal_2_weight_kg,
                     metal_3_name, metal_3_weight_kg,
                     metal_4_name, metal_4_weight_kg,
-                    production_kg, energy_kwh, shots_usage
+                    production_kg, energy_kwh
                 FROM plc_filtered_cycle_data
                 WHERE request_id = @id
                 ORDER BY cycle_number ASC;";
@@ -155,8 +164,7 @@ public class FilterService : IFilterService
                     Metal4Name      = reader.IsDBNull(9)  ? null : reader.GetString(9),
                     Metal4WeightKg  = reader.IsDBNull(10) ? null : reader.GetDouble(10),
                     ProductionKg    = reader.IsDBNull(11) ? 0    : reader.GetDouble(11),
-                    EnergyKwh       = reader.IsDBNull(12) ? 0    : reader.GetDouble(12),
-                    ShotsUsage      = reader.IsDBNull(13) ? 0    : reader.GetDouble(13)
+                    EnergyKwh       = reader.IsDBNull(12) ? 0    : reader.GetDouble(12)
                 });
             }
         }
@@ -205,6 +213,82 @@ public class FilterService : IFilterService
         return results;
     }
 
+    // Section 2 impeller current: per-cycle averages (for the per-impeller trend, mirroring the
+    // Section 1 "click a tile" chart) plus a duration-weighted overall average per impeller (for
+    // the tile's headline value). Weighted, not a flat mean of per-cycle averages, for the same
+    // reason machine_utility_pct is rebuilt from summed seconds rather than averaged percentages —
+    // a short cycle shouldn't count as much as a long one. Cycles with no in-window sample for an
+    // impeller are excluded from that impeller's weighted sum entirely, not counted as zero.
+    public async Task<List<FilteredAmpsDto>> GetAmpsDataAsync(int requestId)
+    {
+        var byImpeller = new Dictionary<int, FilteredAmpsDto>();
+        var weightedSum = new Dictionary<int, double>();
+        var weightTotal = new Dictionary<int, double>();
+
+        try
+        {
+            await using var conn = new NpgsqlConnection(_connectionString);
+            await conn.OpenAsync();
+
+            const string sql = @"
+                SELECT a.impeller_number, a.cycle_number, a.avg_amps, c.blast_start, c.blast_end
+                FROM plc_filtered_amps_data a
+                JOIN plc_filtered_cycle_data c
+                  ON c.request_id = a.request_id AND c.cycle_number = a.cycle_number
+                WHERE a.request_id = @id
+                ORDER BY a.impeller_number ASC, a.cycle_number ASC;";
+
+            await using var cmd = new NpgsqlCommand(sql, conn);
+            cmd.Parameters.AddWithValue("id", requestId);
+            await using var reader = await cmd.ExecuteReaderAsync();
+
+            while (await reader.ReadAsync())
+            {
+                int impellerNumber = (int)reader.GetInt16(0);
+                int cycleNumber    = reader.GetInt32(1);
+                double? avgAmps    = reader.IsDBNull(2) ? null : Convert.ToDouble(reader.GetValue(2));
+                DateTime blastStart = reader.GetDateTime(3);
+                DateTime blastEnd   = reader.GetDateTime(4);
+
+                if (!byImpeller.TryGetValue(impellerNumber, out var dto))
+                {
+                    dto = new FilteredAmpsDto { ImpellerNumber = impellerNumber };
+                    byImpeller[impellerNumber] = dto;
+                    weightedSum[impellerNumber] = 0;
+                    weightTotal[impellerNumber] = 0;
+                }
+
+                dto.Cycles.Add(new FilteredAmpsCyclePointDto
+                {
+                    CycleNumber = cycleNumber,
+                    BlastEnd    = blastEnd,
+                    AvgAmps     = avgAmps.HasValue ? Math.Round(avgAmps.Value, 2) : null
+                });
+
+                if (avgAmps.HasValue)
+                {
+                    double durationSec = Math.Max((blastEnd - blastStart).TotalSeconds, 0);
+                    weightedSum[impellerNumber] += avgAmps.Value * durationSec;
+                    weightTotal[impellerNumber] += durationSec;
+                }
+            }
+
+            foreach (var (impellerNumber, dto) in byImpeller)
+            {
+                dto.OverallAvgAmps = weightTotal[impellerNumber] > 0
+                    ? Math.Round(weightedSum[impellerNumber] / weightTotal[impellerNumber], 2)
+                    : null;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to read filtered amps data for request {Id}", requestId);
+            throw;
+        }
+
+        return byImpeller.Values.OrderBy(d => d.ImpellerNumber).ToList();
+    }
+
     public async Task<FilteredRequestInfoDto?> GetLatestCompletedAsync()
     {
         try
@@ -244,38 +328,9 @@ public class FilterService : IFilterService
         }
     }
 
-    public async Task<List<ShotsBreakdownDto>> GetShotsBreakdownAsync(int requestId)
-    {
-        var results = new List<ShotsBreakdownDto>();
-        try
-        {
-            await using var conn = new NpgsqlConnection(_connectionString);
-            await conn.OpenAsync();
-
-            const string sql = @"
-                SELECT refill_timestamp, blast_count
-                FROM plc_filtered_shots_breakdown
-                WHERE request_id = @id
-                ORDER BY refill_timestamp ASC;";
-
-            await using var cmd = new NpgsqlCommand(sql, conn);
-            cmd.Parameters.AddWithValue("id", requestId);
-            await using var reader = await cmd.ExecuteReaderAsync();
-
-            while (await reader.ReadAsync())
-            {
-                results.Add(new ShotsBreakdownDto
-                {
-                    RefillTimestamp = reader.GetDateTime(0),
-                    BlastCount      = reader.GetInt32(1)
-                });
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to read shots breakdown for request {Id}", requestId);
-            throw;
-        }
-        return results;
-    }
+    // GetShotsBreakdownAsync was removed with the Section 2 shots breakdown: shot refills are a
+    // machine-level Section 1 fact that no filter scopes meaningfully (a refill interval spans
+    // whatever cycles fall in it, mixing casting items), so the "Blast Cycles per Refill Interval"
+    // chart lives only in Section 1 now. Section 1's own /api/shotsbreakdown is untouched.
+    // plc_filtered_shots_breakdown is left in place with its existing rows — nothing writes to it.
 }

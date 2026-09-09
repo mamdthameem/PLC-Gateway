@@ -326,6 +326,14 @@ public class DatabaseService
         // This is the single source of truth for lifetime energy (summed) and windowed
         // per-metal production (split by metal weight), so no per-cycle amp re-query is needed
         // during aggregation.
+        //
+        // The ::numeric cast on the duration term is load-bearing, not decoration. @duration_sec
+        // arrives as float8 (it is bound from a C# double), and numeric * float8 yields float8 —
+        // for which round(value, digits) does not exist in PostgreSQL. Without the cast this
+        // INSERT throws "function round(double precision, integer) does not exist" on EVERY call,
+        // RetryAsync swallows it after its retries, and plc_cycles silently never gains a row.
+        // The migration's backfill does the same arithmetic against the NUMERIC duration_sec
+        // COLUMN, which is why it works and masked this for so long.
         const string sql = @"
             INSERT INTO plc_cycles
                 (blast_start, blast_end, duration_sec,
@@ -354,7 +362,7 @@ public class DatabaseService
                               ORDER BY h2.timestamp DESC LIMIT 1),
                             0)
                      ), 0)
-                  FROM generate_series(1, 10) g) * (@duration_sec / 3600.0), 6))
+                  FROM generate_series(1, 10) g) * (@duration_sec / 3600.0)::numeric, 6))
             RETURNING cycle_number";
 
         await RetryAsync(async conn =>
@@ -475,6 +483,49 @@ public class DatabaseService
     // SECTION 2: Calculation Requests (calculation_requests)
     // ════════════════════════════════════════════════════════════════════════
 
+    // Inserts a request already claimed as 'processing' (not the default 'pending'), so
+    // FilteredCalculationService's poller — which only ever picks up 'pending' rows — can never
+    // grab this one too and double-process it. Used by the synchronous admin/filter endpoint,
+    // which computes inline instead of waiting for the poller.
+    public async Task<int> InsertClaimedRequestAsync(
+        DateTime filterStart, DateTime filterEnd, string? periodLabel, string filterBy,
+        int? filterCycleFrom, int? filterCycleTo, string? filterMetalName,
+        string[]? selectedParameters = null)
+    {
+        const string sql = @"
+            INSERT INTO calculation_requests
+                (filter_start, filter_end, period_label, filter_by,
+                 filter_cycle_from, filter_cycle_to, filter_metal_name,
+                 selected_parameters, status)
+            VALUES
+                (@start, @end, @label, @filterBy,
+                 @cycleFrom, @cycleTo, @metalName,
+                 @selected, 'processing')
+            RETURNING id";
+
+        int id = 0;
+        await RetryAsync(async conn =>
+        {
+            await using var cmd = new NpgsqlCommand(sql, conn);
+            cmd.Parameters.AddWithValue("start",     filterStart);
+            cmd.Parameters.AddWithValue("end",       filterEnd);
+            cmd.Parameters.AddWithValue("label",     periodLabel is null ? DBNull.Value : (object)periodLabel);
+            cmd.Parameters.AddWithValue("filterBy",  filterBy);
+            cmd.Parameters.AddWithValue("cycleFrom", filterCycleFrom is null ? DBNull.Value : (object)filterCycleFrom);
+            cmd.Parameters.AddWithValue("cycleTo",   filterCycleTo is null ? DBNull.Value : (object)filterCycleTo);
+            cmd.Parameters.AddWithValue("metalName", filterMetalName is null ? DBNull.Value : (object)filterMetalName);
+            // NULL (not an empty array) is the "all parameters" marker — an empty array would mean
+            // "compute nothing", which is never a legitimate request.
+            cmd.Parameters.Add(new NpgsqlParameter("selected", NpgsqlDbType.Array | NpgsqlDbType.Text)
+            {
+                Value = selectedParameters is { Length: > 0 } ? selectedParameters : (object)DBNull.Value
+            });
+            id = (int)(await cmd.ExecuteScalarAsync())!;
+        }, "InsertClaimedRequest");
+
+        return id;
+    }
+
     public async Task<CalculationRequest?> GetNextPendingRequestAsync()
     {
         CalculationRequest? result = null;
@@ -482,7 +533,7 @@ public class DatabaseService
         const string sql = @"
             SELECT id, filter_start, filter_end, period_label,
                    filter_by, filter_cycle_from, filter_cycle_to, filter_metal_name,
-                   status, created_at, processed_at
+                   status, created_at, processed_at, selected_parameters
             FROM calculation_requests
             WHERE status = 'pending'
             ORDER BY created_at ASC
@@ -505,7 +556,10 @@ public class DatabaseService
                     FilterMetalName = reader.IsDBNull(7)  ? null : reader.GetString(7),
                     Status          = reader.GetString(8),
                     CreatedAt       = reader.GetDateTime(9),
-                    ProcessedAt     = reader.IsDBNull(10) ? null : reader.GetDateTime(10)
+                    ProcessedAt     = reader.IsDBNull(10) ? null : reader.GetDateTime(10),
+                    // NULL for every row written before the per-parameter toggles existed,
+                    // which CalculationService.ResolveSelection reads as "all parameters".
+                    SelectedParameters = reader.IsDBNull(11) ? null : reader.GetFieldValue<string[]>(11)
                 };
         }, "GetNextPendingRequest");
 
@@ -553,40 +607,88 @@ public class DatabaseService
     // SECTION 2: Per-Cycle Breakdown (plc_filtered_cycle_data)
     // ════════════════════════════════════════════════════════════════════════
 
-    public async Task InsertFilteredCycleDataAsync(int requestId, PlcCycle cycle,
-        decimal productionKg, decimal energyKwh, decimal shotsUsage)
+    // Batched: one round trip for the whole cycle set (NpgsqlBatch), instead of one round trip
+    // per cycle. Matters for filterBy=="metal", where the cycle count can span a plant's entire
+    // history.
+    public async Task InsertFilteredCycleDataBatchAsync(
+        int requestId, List<(PlcCycle Cycle, decimal ProductionKg, decimal EnergyKwh)> rows)
     {
+        if (rows.Count == 0) return;
+
         const string sql = @"
             INSERT INTO plc_filtered_cycle_data
                 (request_id, cycle_number, blast_start, blast_end,
                  metal_1_name, metal_1_weight_kg, metal_2_name, metal_2_weight_kg,
                  metal_3_name, metal_3_weight_kg, metal_4_name, metal_4_weight_kg,
-                 production_kg, energy_kwh, shots_usage)
+                 production_kg, energy_kwh)
             VALUES
                 (@request_id, @cycle_number, @blast_start, @blast_end,
                  @m1n, @m1w, @m2n, @m2w, @m3n, @m3w, @m4n, @m4w,
-                 @production, @energy, @shots)";
+                 @production, @energy)";
+
+        await RetryAsync(async conn =>
+        {
+            await using var batch = new NpgsqlBatch(conn);
+            foreach (var (cycle, productionKg, energyKwh) in rows)
+            {
+                var cmd = new NpgsqlBatchCommand(sql);
+                cmd.Parameters.AddWithValue("request_id",   requestId);
+                cmd.Parameters.AddWithValue("cycle_number", cycle.CycleNumber);
+                cmd.Parameters.AddWithValue("blast_start",  cycle.BlastStart);
+                cmd.Parameters.AddWithValue("blast_end",    cycle.BlastEnd);
+                cmd.Parameters.AddWithValue("m1n", cycle.Metal1Name is null ? (object)DBNull.Value : cycle.Metal1Name);
+                cmd.Parameters.AddWithValue("m1w", cycle.Metal1WeightKg.HasValue ? (object)(decimal)cycle.Metal1WeightKg.Value : DBNull.Value);
+                cmd.Parameters.AddWithValue("m2n", cycle.Metal2Name is null ? (object)DBNull.Value : cycle.Metal2Name);
+                cmd.Parameters.AddWithValue("m2w", cycle.Metal2WeightKg.HasValue ? (object)(decimal)cycle.Metal2WeightKg.Value : DBNull.Value);
+                cmd.Parameters.AddWithValue("m3n", cycle.Metal3Name is null ? (object)DBNull.Value : cycle.Metal3Name);
+                cmd.Parameters.AddWithValue("m3w", cycle.Metal3WeightKg.HasValue ? (object)(decimal)cycle.Metal3WeightKg.Value : DBNull.Value);
+                cmd.Parameters.AddWithValue("m4n", cycle.Metal4Name is null ? (object)DBNull.Value : cycle.Metal4Name);
+                cmd.Parameters.AddWithValue("m4w", cycle.Metal4WeightKg.HasValue ? (object)(decimal)cycle.Metal4WeightKg.Value : DBNull.Value);
+                cmd.Parameters.AddWithValue("production", productionKg);
+                cmd.Parameters.AddWithValue("energy",     energyKwh);
+                batch.BatchCommands.Add(cmd);
+            }
+            await batch.ExecuteNonQueryAsync();
+        }, $"InsertFilteredCycleDataBatch request={requestId} rows={rows.Count}");
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // SECTION 2: Filtered Impeller Current (plc_filtered_amps_data)
+    // ════════════════════════════════════════════════════════════════════════
+
+    // One round trip for the whole cycle set: AVG(value_num) per cycle×impeller is computed and
+    // inserted entirely in SQL, so raw 1 Hz current samples (dense while blast is ON) never cross
+    // into C#. NULL avg_amps (no in-window sample for that impeller) is left as a gap rather than
+    // synthesized as zero.
+    public async Task InsertFilteredAmpsDataAsync(int requestId, List<PlcCycle> cycles)
+    {
+        if (cycles.Count == 0) return;
+
+        const string sql = @"
+            INSERT INTO plc_filtered_amps_data (request_id, cycle_number, impeller_number, avg_amps)
+            SELECT @request_id, c.cycle_number, i.impeller_number, AVG(h.value_num)
+            FROM UNNEST(@cycle_numbers, @blast_starts, @blast_ends)
+                AS c(cycle_number, blast_start, blast_end)
+            CROSS JOIN generate_series(1, 10) AS i(impeller_number)
+            LEFT JOIN plc_historical_data h
+                ON h.parameter_name = 'Current_imp_' || i.impeller_number
+               AND h.timestamp > c.blast_start AND h.timestamp <= c.blast_end
+               AND h.value_num IS NOT NULL
+            GROUP BY c.cycle_number, i.impeller_number";
+
+        var cycleNumbers = cycles.Select(c => c.CycleNumber).ToArray();
+        var blastStarts  = cycles.Select(c => c.BlastStart).ToArray();
+        var blastEnds    = cycles.Select(c => c.BlastEnd).ToArray();
 
         await RetryAsync(async conn =>
         {
             await using var cmd = new NpgsqlCommand(sql, conn);
-            cmd.Parameters.AddWithValue("request_id",   requestId);
-            cmd.Parameters.AddWithValue("cycle_number", cycle.CycleNumber);
-            cmd.Parameters.AddWithValue("blast_start",  cycle.BlastStart);
-            cmd.Parameters.AddWithValue("blast_end",    cycle.BlastEnd);
-            cmd.Parameters.AddWithValue("m1n", cycle.Metal1Name is null ? (object)DBNull.Value : cycle.Metal1Name);
-            cmd.Parameters.AddWithValue("m1w", cycle.Metal1WeightKg.HasValue ? (object)(decimal)cycle.Metal1WeightKg.Value : DBNull.Value);
-            cmd.Parameters.AddWithValue("m2n", cycle.Metal2Name is null ? (object)DBNull.Value : cycle.Metal2Name);
-            cmd.Parameters.AddWithValue("m2w", cycle.Metal2WeightKg.HasValue ? (object)(decimal)cycle.Metal2WeightKg.Value : DBNull.Value);
-            cmd.Parameters.AddWithValue("m3n", cycle.Metal3Name is null ? (object)DBNull.Value : cycle.Metal3Name);
-            cmd.Parameters.AddWithValue("m3w", cycle.Metal3WeightKg.HasValue ? (object)(decimal)cycle.Metal3WeightKg.Value : DBNull.Value);
-            cmd.Parameters.AddWithValue("m4n", cycle.Metal4Name is null ? (object)DBNull.Value : cycle.Metal4Name);
-            cmd.Parameters.AddWithValue("m4w", cycle.Metal4WeightKg.HasValue ? (object)(decimal)cycle.Metal4WeightKg.Value : DBNull.Value);
-            cmd.Parameters.AddWithValue("production", productionKg);
-            cmd.Parameters.AddWithValue("energy",     energyKwh);
-            cmd.Parameters.AddWithValue("shots",      shotsUsage);
+            cmd.Parameters.AddWithValue("request_id", requestId);
+            cmd.Parameters.Add(new NpgsqlParameter("cycle_numbers", NpgsqlDbType.Array | NpgsqlDbType.Integer)  { Value = cycleNumbers });
+            cmd.Parameters.Add(new NpgsqlParameter("blast_starts",  NpgsqlDbType.Array | NpgsqlDbType.Timestamp) { Value = blastStarts });
+            cmd.Parameters.Add(new NpgsqlParameter("blast_ends",    NpgsqlDbType.Array | NpgsqlDbType.Timestamp) { Value = blastEnds });
             await cmd.ExecuteNonQueryAsync();
-        }, $"InsertFilteredCycleData cycle={cycle.CycleNumber}");
+        }, $"InsertFilteredAmpsData request={requestId} cycles={cycles.Count}");
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -681,7 +783,7 @@ public class DatabaseService
             SELECT last_hist_id, blast_seeded, blast_on, blast_seg_start, blast_closed_sec,
                    first_blast_ts, cycle_count, machine_seeded, machine_on, machine_seg_start,
                    machine_closed_sec, refill_count, first_refill_change_ts, prev_refill_change_ts,
-                   last_refill_any_ts, energy_total, last_cycle_number
+                   last_refill_any_ts, energy_total, last_cycle_number, total_refill_weight_kg
             FROM plc_aggregation_state WHERE id = 1";
 
         await RetryAsync(async conn =>
@@ -707,6 +809,7 @@ public class DatabaseService
                 s.LastRefillAnyTs     = r.IsDBNull(14) ? null : r.GetDateTime(14);
                 s.EnergyTotal         = r.GetDecimal(15);
                 s.LastCycleNumber     = r.GetInt32(16);
+                s.TotalRefillWeightKg = r.GetDecimal(17);
             }
         }, "GetAggregationState");
 
@@ -724,7 +827,8 @@ public class DatabaseService
                 machine_seg_start = @machine_seg_start, machine_closed_sec = @machine_closed_sec,
                 refill_count = @refill_count, first_refill_change_ts = @first_refill_change_ts,
                 prev_refill_change_ts = @prev_refill_change_ts, last_refill_any_ts = @last_refill_any_ts,
-                energy_total = @energy_total, last_cycle_number = @last_cycle_number
+                energy_total = @energy_total, last_cycle_number = @last_cycle_number,
+                total_refill_weight_kg = @total_refill_weight_kg
             WHERE id = 1";
 
         await RetryAsync(async conn =>
@@ -747,6 +851,7 @@ public class DatabaseService
             cmd.Parameters.AddWithValue("last_refill_any_ts", (object?)s.LastRefillAnyTs ?? DBNull.Value);
             cmd.Parameters.AddWithValue("energy_total", s.EnergyTotal);
             cmd.Parameters.AddWithValue("last_cycle_number", s.LastCycleNumber);
+            cmd.Parameters.AddWithValue("total_refill_weight_kg", s.TotalRefillWeightKg);
             await cmd.ExecuteNonQueryAsync();
         }, "SaveAggregationState");
     }
@@ -779,6 +884,7 @@ public class DatabaseService
                         WHEN value_num IS NOT NULL THEN value_num <> 0
                         WHEN value IS NOT NULL THEN lower(value) IN ('1','true')
                         ELSE NULL END AS is_on,
+                   value_num,
                    previous_value, storage_reason
             FROM plc_historical_data
             WHERE id > @lastId AND parameter_name = ANY(@names)
@@ -800,8 +906,9 @@ public class DatabaseService
                     ParameterName = r.GetString(1),
                     Timestamp     = r.GetDateTime(2),
                     ValueBool     = r.IsDBNull(3) ? (bool?)null : r.GetBoolean(3),
-                    PreviousValue = r.IsDBNull(4) ? null : r.GetString(4),
-                    StorageReason = r.GetString(5)
+                    ValueNum      = r.IsDBNull(4) ? (double?)null : r.GetDouble(4),
+                    PreviousValue = r.IsDBNull(5) ? null : r.GetString(5),
+                    StorageReason = r.GetString(6)
                 });
             }
         }, "GetNewAggregationEvents");

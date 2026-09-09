@@ -31,6 +31,22 @@ public class FilterController : ControllerBase
             if (input.FilterStart >= input.FilterEnd && input.FilterBy == "time")
                 return BadRequest(new { error = "filter_start must be before filter_end for time-based filters" });
 
+            // Omitted/null/[] means "all parameters". Unknown keys are rejected rather than
+            // dropped, so a stale dashboard build fails loudly instead of silently computing less.
+            if (input.SelectedParameters is { Length: > 0 })
+            {
+                var unknown = input.SelectedParameters
+                    .Except(CalculationService.Section2ParameterKeys, StringComparer.Ordinal)
+                    .ToArray();
+                if (unknown.Length > 0)
+                    return BadRequest(new
+                    {
+                        error = "unknown selectedParameters",
+                        unknown,
+                        supported = CalculationService.Section2ParameterKeys
+                    });
+            }
+
             var id = await _service.SubmitRequestAsync(input);
             return Ok(new { requestId = id });
         }
@@ -120,20 +136,26 @@ public class FilterController : ControllerBase
     }
 
     /// <summary>
-    /// Shots breakdown from plc_filtered_shots_breakdown once status is 'done'.
+    /// Per-impeller current from plc_filtered_amps_data once status is 'done'. Per impeller:
+    /// a duration-weighted overall average for the filter (tile headline value) plus a per-cycle
+    /// series (tile-click chart), mirroring the Section 1 Amps tile/graph but scoped to this filter.
     /// </summary>
-    [HttpGet("{id}/shots")]
-    public async Task<IActionResult> GetShots(int id)
+    [HttpGet("{id}/amps")]
+    public async Task<IActionResult> GetAmps(int id)
     {
         try
         {
-            var data = await _service.GetShotsBreakdownAsync(id);
+            var data = await _service.GetAmpsDataAsync(id);
             return Ok(data);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to fetch shots breakdown for request {Id}", id);
-            return StatusCode(500, new { error = "Failed to fetch shots breakdown" });
+            _logger.LogError(ex, "Failed to fetch filtered amps data for request {Id}", id);
+            return StatusCode(500, new { error = "Failed to fetch filtered amps data" });
         }
     }
+
+    // GET {id}/shots was removed: the shots breakdown is Section 1 only now (it does not respond
+    // to a filter — a refill interval spans whatever cycles fall in it, mixing casting items), so
+    // the dashboard reads it from /api/shotsbreakdown above the filter bar instead.
 }

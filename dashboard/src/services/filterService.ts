@@ -1,9 +1,9 @@
 import type {
   FilterRequest, FilterStatus, FilterResult, FilteredCycle,
-  FilteredMetalProduction, ShotsBreakdownEntry,
+  FilteredMetalProduction, FilteredAmps,
 } from '../types';
 
-const API_BASE = (import.meta.env.VITE_API_URL as string) || '';
+import { API_BASE } from './apiBase';
 
 function authHeaders(): Record<string, string> {
   const token = localStorage.getItem('plc_gateway_token');
@@ -62,10 +62,18 @@ export async function fetchFilterMetals(requestId: number): Promise<FilteredMeta
   return res.json() as Promise<FilteredMetalProduction[]>;
 }
 
-export async function fetchFilterShots(requestId: number): Promise<ShotsBreakdownEntry[]> {
-  const res = await fetch(`${API_BASE}/api/filter/${requestId}/shots`, {
+// fetchFilterShots was removed along with GET /api/filter/{id}/shots: the shots breakdown is
+// Section 1 only now (it does not respond to a filter), so the dashboard reads it from
+// shotsBreakdownService above the filter bar instead.
+
+/**
+ * Section 2 impeller current — mirrors the Section 1 Amps tile/graph, scoped to this filter's
+ * cycles instead of "last completed cycle".
+ */
+export async function fetchFilterAmps(requestId: number): Promise<FilteredAmps[]> {
+  const res = await fetch(`${API_BASE}/api/filter/${requestId}/amps`, {
     headers: authHeaders(),
   });
-  if (!res.ok) throw new Error(`Filter shots fetch failed: ${res.status} ${res.statusText}`);
-  return res.json() as Promise<ShotsBreakdownEntry[]>;
+  if (!res.ok) throw new Error(`Filter amps fetch failed: ${res.status} ${res.statusText}`);
+  return res.json() as Promise<FilteredAmps[]>;
 }

@@ -9,6 +9,7 @@ import { ProtectedRoute } from './components/ProtectedRoute';
 import { Login } from './components/Login';
 import { MachineDashboard } from './components/MachineDashboard';
 import { Sidebar, TopBar } from './components';
+import { BASE_PATH } from './services/apiBase';
 
 const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { theme } = useTheme();
@@ -42,7 +43,10 @@ const ThemeWrapper: React.FC = () => {
       <AuthProvider>
         <NotificationProvider>
           <UIProvider>
-            <BrowserRouter>
+            {/* basename = the Vite `base` path with no trailing slash, so client routes resolve
+                under an IIS sub-path deployment (/shotsense, /shotsense/dashboard) and at the
+                root alike. Falls back to "/" when the app is mounted at the site root. */}
+            <BrowserRouter basename={BASE_PATH || '/'}>
               <Routes>
                 <Route path="/login" element={<Login />} />
                 <Route

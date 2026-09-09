@@ -26,6 +26,11 @@
       "updatedAt": "2026-07-11T06:42:00.512Z"
     },
     {
+      "parameterName": "effective_shots_usage_kg_per_ton",
+      "value": "23.8649",
+      "updatedAt": "2026-07-11T06:42:00.512Z"
+    },
+    {
       "parameterName": "energy_kwh_total",
       "value": "5321.744",
       "updatedAt": "2026-07-11T06:42:00.512Z"
@@ -1583,11 +1588,15 @@
       },
       {
         "parameterName": "energy_per_casting_kwh_kg",
-        "value": "0.0405"
+        "value": "0.0586"
       },
       {
         "parameterName": "machine_utility_pct",
         "value": "58.90"
+      },
+      {
+        "parameterName": "production_qty_kg",
+        "value": "655.50"
       }
     ],
     "cycles": [
@@ -1604,8 +1613,7 @@
         "metal4Name": null,
         "metal4WeightKg": null,
         "productionKg": 345.5,
-        "energyKwh": 13.208,
-        "shotsUsage": 0.0641
+        "energyKwh": 13.208
       },
       {
         "cycleNumber": 1283,
@@ -1620,8 +1628,7 @@
         "metal4Name": null,
         "metal4WeightKg": null,
         "productionKg": 310,
-        "energyKwh": 12.554,
-        "shotsUsage": 0.0587
+        "energyKwh": 12.554
       },
       {
         "cycleNumber": 1284,
@@ -1636,18 +1643,17 @@
         "metal4Name": null,
         "metal4WeightKg": null,
         "productionKg": 293,
-        "energyKwh": 12.65,
-        "shotsUsage": 0.0712
+        "energyKwh": 12.65
       }
     ],
-    "shotsBreakdown": [
+    "metals": [
       {
-        "refillTimestamp": "2026-07-10T19:26:51Z",
-        "blastCount": 9
+        "metalName": "Grey Iron",
+        "productionKg": 550.0
       },
       {
-        "refillTimestamp": "2026-07-11T02:11:09Z",
-        "blastCount": 7
+        "metalName": "SG Iron",
+        "productionKg": 105.5
       }
     ]
   }

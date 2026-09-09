@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Expo demo data generator. NOT part of the deployed gateway: the IIS publish targets
+    PLCGateway.csproj only, so nothing in here can run in normal operation.
+
+    It writes RAW TAG ROWS ONLY (the same shape GatewayWorker's poller writes) and then lets the
+    real calculation pipeline produce every KPI from them. See README-DEMO-SEEDER.md.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>PLCGateway.DemoSeeder</RootNamespace>
+    <AssemblyName>PLCGateway.DemoSeeder</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PLCGateway\PLCGateway.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The gateway's own tag list is the single source of truth for addresses and data types;
+         linking it means the seeded rows can never drift from what the poller would emit. -->
+    <Content Include="..\PLCGateway\appsettings.json" Link="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>

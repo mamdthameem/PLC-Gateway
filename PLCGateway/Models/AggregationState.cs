@@ -27,6 +27,15 @@ public sealed class AggregationState
     public DateTime? PrevRefillChangeTs { get; set; }
     public DateTime? LastRefillAnyTs { get; set; }
 
+    // Running sum of refill weight (real change events only, positive values), for
+    // effective_shots_usage_kg_per_ton = total_refill_weight_kg ÷ (production_qty_kg / 1000).
+    //
+    // Known asymmetry (see README "Effective Shots Usage"): this accumulates only from GATEWAY
+    // commissioning, while production_qty_kg is the PLC's own lifetime Tonnage accumulator. On a
+    // gateway installed onto an already-running machine the ratio therefore under-reports shot
+    // consumption, converging as gateway history grows. Left as-is by decision — see README.
+    public decimal TotalRefillWeightKg { get; set; }
+
     // Energy running total (Σ plc_cycles.energy_kwh) + cycle watermark
     public decimal EnergyTotal { get; set; }
     public int LastCycleNumber { get; set; }
@@ -39,6 +48,7 @@ public sealed class AggEvent
     public string ParameterName { get; set; } = string.Empty;
     public DateTime Timestamp { get; set; }
     public bool? ValueBool { get; set; }
+    public double? ValueNum { get; set; }
     public string? PreviousValue { get; set; }
     public string StorageReason { get; set; } = string.Empty;
 }

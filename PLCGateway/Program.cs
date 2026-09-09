@@ -27,7 +27,16 @@ builder.Services.AddSingleton<CalculationService>(sp =>
         sp.GetRequiredService<ILogger<CalculationService>>(), config));
 builder.Services.AddSingleton<LicenseState>();
 
-builder.Services.AddHostedService<GatewayWorker>();
+// Demo mode: the app is running against a pre-seeded dataset with NO PLC attached (expo /
+// offline demo — see PLCGateway.DemoSeeder). The scan loop is skipped because a failing PLC
+// connection would mark every Tier 1 row stale, force machine status OFF and write DISCONNECT
+// rows over the seeded history. Everything else — aggregation, cycle tracking, the filtered
+// calculation processor, the whole API — runs completely unchanged against the seeded rows.
+// Default is false, so a normal deployment is unaffected.
+bool demoMode = config.GetValue<bool>("Demo:Enabled");
+if (!demoMode)
+    builder.Services.AddHostedService<GatewayWorker>();
+
 builder.Services.AddHostedService<AggregationService>();
 builder.Services.AddHostedService<CycleTrackingService>();
 builder.Services.AddHostedService<FilteredCalculationService>();
@@ -120,14 +129,25 @@ using (var scope = app.Services.CreateScope())
 
     // Offline-gap handling: force machine/blast OFF backdated to the last recorded scan so the
     // unobserved gap contributes zero to every duration and accumulator.
-    try
+    //
+    // Skipped in demo mode: there is no PLC to have disconnected from, and running it would stamp
+    // the seeded dataset with a DISCONNECT row and mark all of Tier 1 stale.
+    if (demoMode)
     {
-        var lastScan = await db.GetGatewayLastScanAtAsync();
-        await db.RecordPlcDisconnectAsync(lastScan ?? DateTime.Now,
-            GatewayWorker.MACHINE_STATUS_TAG_NAME, GatewayWorker.BLAST_TAG_NAME);
-        logger.LogInformation("Startup gap handled (last recorded scan: {last}).", lastScan);
+        logger.LogWarning("DEMO MODE — PLC scan loop and startup gap handling are disabled. " +
+                          "Serving the pre-seeded dataset; no live PLC data will be recorded.");
     }
-    catch (Exception ex) { logger.LogError(ex, "Startup gap handling failed."); }
+    else
+    {
+        try
+        {
+            var lastScan = await db.GetGatewayLastScanAtAsync();
+            await db.RecordPlcDisconnectAsync(lastScan ?? DateTime.Now,
+                GatewayWorker.MACHINE_STATUS_TAG_NAME, GatewayWorker.BLAST_TAG_NAME);
+            logger.LogInformation("Startup gap handled (last recorded scan: {last}).", lastScan);
+        }
+        catch (Exception ex) { logger.LogError(ex, "Startup gap handling failed."); }
+    }
 }
 
 // ── HTTP pipeline ────────────────────────────────────────────────────────────

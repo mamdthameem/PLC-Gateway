@@ -1,14 +1,23 @@
 import * as XLSX from 'xlsx';
 import { PARAM_META, formatParameterValue } from './unitConverters';
-import type {
-  FilterResult, FilteredCycle, FilteredMetalProduction, ShotsBreakdownEntry,
-} from '../types';
+import type { FilterResult, FilteredCycle, FilteredMetalProduction } from '../types';
 
 /**
- * Builds the filtered-results workbook from data already on screen.
+ * Builds the filtered-results workbook.
+ *
+ * Reads the FETCHED Section 2 dataset, never a rendered table — which is why removing Section 2's
+ * tables left the export intact. The three arrays here are the same ones FilterResultsView fetches
+ * to drive its tiles and graphs.
  *
  * Only WRITES a workbook — no spreadsheet file is ever parsed. That matters because the pinned
  * xlsx build's known advisories are all in the reader path, which this never exercises.
+ *
+ * Sheets: Parameters, Item Production, Cycles. The former "Shots Breakdown" sheet was dropped when
+ * the shots breakdown became Section 1 only — it does not respond to a filter, so there was
+ * nothing filter-scoped left to export.
+ *
+ * A sheet is empty when its parameter was not selected in the filter bar: unselected parameters
+ * are never computed, so there is no data to export for them.
  */
 
 export interface FilteredExportInput {
@@ -16,10 +25,11 @@ export interface FilteredExportInput {
   filterBy: 'time' | 'cycle' | 'metal';
   filterStart: string;
   filterEnd: string;
+  /** Set only for an item filter. */
+  itemName: string | null;
   results: FilterResult[];
   cycles: FilteredCycle[];
-  metals: FilteredMetalProduction[];
-  shots: ShotsBreakdownEntry[];
+  items: FilteredMetalProduction[];
 }
 
 function localStamp(iso: string): string {
@@ -39,7 +49,7 @@ function fileStamp(): string {
 }
 
 export function exportFilteredWorkbook(input: FilteredExportInput): void {
-  const { label, filterBy, filterStart, filterEnd, results, cycles, metals, shots } = input;
+  const { label, filterBy, filterStart, filterEnd, itemName, results, cycles, items } = input;
 
   const wb = XLSX.utils.book_new();
 
@@ -47,7 +57,9 @@ export function exportFilteredWorkbook(input: FilteredExportInput): void {
   // so the export is useful for both further analysis and reading as-is.
   const paramRows = [
     ['Filter', label],
-    ['Filter mode', filterBy],
+    // "item" is the user-facing word for what the wire format calls a metal filter.
+    ['Filter mode', filterBy === 'metal' ? 'item' : filterBy],
+    ...(itemName ? [['Casting item', itemName]] : []),
     ...(filterBy === 'time'
       ? [['Range', `${localStamp(filterStart)} → ${localStamp(filterEnd)}`]]
       : []),
@@ -62,22 +74,23 @@ export function exportFilteredWorkbook(input: FilteredExportInput): void {
   ];
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(paramRows), 'Parameters');
 
-  // Sheet 2 — production per casting metal (summed declared weights).
-  const metalTotal = metals.reduce((sum, m) => sum + m.productionKg, 0);
-  const metalRows = [
-    ['Casting metal', 'Declared weight (kg)'],
-    ...metals.map(m => [m.metalName, m.productionKg]),
-    ...(metals.length > 0 ? [['Total', metalTotal]] : []),
+  // Sheet 2 — production per casting item (summed declared weights).
+  const itemTotal = items.reduce((sum, i) => sum + i.productionKg, 0);
+  const itemRows = [
+    ['Casting item', 'Declared weight (kg)'],
+    ...items.map(i => [i.metalName, i.productionKg]),
+    ...(items.length > 0 ? [['Total', itemTotal]] : []),
   ];
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(metalRows), 'Metal Production');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(itemRows), 'Item Production');
 
-  // Sheet 3 — per-cycle breakdown.
+  // Sheet 3 — per-cycle breakdown. The four declared slots keep their per-cycle detail here even
+  // though Section 2 no longer renders a cycle table on screen.
   const cycleRows = [
     [
       'Cycle #', 'Start', 'End',
-      'Metal 1', 'Metal 1 kg', 'Metal 2', 'Metal 2 kg',
-      'Metal 3', 'Metal 3 kg', 'Metal 4', 'Metal 4 kg',
-      'Production (kg)', 'Energy (kWh)', 'Shots usage',
+      'Item 1', 'Item 1 kg', 'Item 2', 'Item 2 kg',
+      'Item 3', 'Item 3 kg', 'Item 4', 'Item 4 kg',
+      'Production (kg)', 'Energy (kWh)',
     ],
     ...cycles.map(c => [
       c.cycleNumber,
@@ -89,17 +102,9 @@ export function exportFilteredWorkbook(input: FilteredExportInput): void {
       c.metal4Name ?? '', c.metal4WeightKg ?? '',
       c.productionKg,
       c.energyKwh,
-      c.shotsUsage,
     ]),
   ];
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(cycleRows), 'Cycles');
-
-  // Sheet 4 — blast cycles per refill interval.
-  const shotsRows = [
-    ['Refill timestamp', 'Blast cycles until next refill'],
-    ...shots.map(s => [localStamp(s.refillTimestamp), s.blastCount]),
-  ];
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(shotsRows), safeSheetName('Shots Breakdown'));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(cycleRows), safeSheetName('Cycles'));
 
   XLSX.writeFile(wb, `plc-filtered-${fileStamp()}.xlsx`);
 }
