@@ -1,9 +1,12 @@
 import { useState, useEffect } from 'react';
 import { Box, CircularProgress, Alert, Typography } from '@mui/material';
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell,
 } from 'recharts';
 import { fetchFilterMetals } from '../services/filterService';
+import {
+  Y_AXIS, CHART_MARGIN, CHART_HEIGHT, niceScaleOf, xAxisTitle, yAxisTitle,
+} from '../utils/chartAxis';
 import type { FilteredMetalProduction } from '../types';
 
 interface Props {
@@ -70,28 +73,37 @@ export default function ItemProductionGraph({ requestId }: Props) {
     unspecified: i.metalName === 'unspecified',
   }));
 
+  const y = niceScaleOf(data, d => d.productionKg);
+
   return (
     <Box>
       <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
-        Declared casting weight per item · total{' '}
-        {total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kg
+        Declared casting weight per item. Total{' '}
+        {total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kg.
       </Typography>
 
-      <Box sx={{ width: '100%', height: 340 }}>
+      <Box sx={{ width: '100%', height: CHART_HEIGHT }}>
         <ResponsiveContainer>
-          <BarChart data={data} margin={{ top: 8, right: 16, left: 8, bottom: 48 }}>
+          <BarChart data={data} margin={CHART_MARGIN}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} />
+            {/* interval={0} prints every item name: this axis is a short list of categories, not a
+                dense time series, so there is never a reason to hide one. */}
             <XAxis
               dataKey="name"
               angle={-30}
               textAnchor="end"
               interval={0}
-              height={60}
+              height={72}
+              tickMargin={6}
               tick={{ fontSize: 12 }}
+              label={xAxisTitle('Casting item')}
             />
             <YAxis
-              tick={{ fontSize: 12 }}
-              label={{ value: 'kg', angle: -90, position: 'insideLeft', style: { fontSize: 12 } }}
+              {...Y_AXIS}
+              domain={y.domain}
+              ticks={y.ticks}
+              tickFormatter={(v: number) => v.toLocaleString()}
+              label={yAxisTitle('Declared weight (kg)')}
             />
             <Tooltip
               formatter={(v: number | undefined) => [
@@ -99,7 +111,8 @@ export default function ItemProductionGraph({ requestId }: Props) {
                 'Declared weight',
               ]}
             />
-            <Bar dataKey="productionKg" radius={[4, 4, 0, 0]}>
+            <Legend wrapperStyle={{ fontSize: 12 }} verticalAlign="top" height={28} />
+            <Bar dataKey="productionKg" name="Declared weight (kg)" radius={[4, 4, 0, 0]}>
               {data.map(d => (
                 <Cell key={d.name} fill={d.unspecified ? '#94a3b8' : '#2563eb'} />
               ))}

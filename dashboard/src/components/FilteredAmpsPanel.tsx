@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import {
-  Box, Grid, Paper, Typography, CircularProgress, Alert,
+  Box, Paper, Typography, CircularProgress, Alert,
   Dialog, DialogTitle, DialogContent, IconButton, Tooltip,
 } from '@mui/material';
 import BarChartIcon from '@mui/icons-material/BarChart';
@@ -53,11 +53,20 @@ export default function FilteredAmpsPanel({ requestId }: Props) {
 
   return (
     <Box>
-      <Grid container spacing={2}>
+      {/* Ten impellers, five to a row — a 6-column grid split them 6 + 4, which reads as though
+          the last four are a different group. CSS grid rather than MUI Grid because a 12-column
+          system cannot divide into fifths. */}
+      <Box
+        sx={{
+          display: 'grid',
+          gridTemplateColumns: { xs: 'repeat(2,1fr)', sm: 'repeat(3,1fr)', md: 'repeat(5,1fr)' },
+          gap: 2,
+        }}
+      >
         {readings.map(r => {
           const display = r.overallAvgAmps != null ? `${r.overallAvgAmps.toFixed(2)} A` : '—';
           return (
-            <Grid key={r.impellerNumber} size={{ xs: 6, sm: 4, md: 2 }}>
+            <Box key={r.impellerNumber}>
               <Paper
                 variant="outlined"
                 onClick={() => setOpenImp(r.impellerNumber)}
@@ -74,7 +83,7 @@ export default function FilteredAmpsPanel({ requestId }: Props) {
                   <Typography
                     variant="caption"
                     color="text.secondary"
-                    sx={{ fontWeight: 600, fontSize: '0.65rem', textTransform: 'uppercase' }}
+                    sx={{ fontWeight: 600, fontSize: '0.65rem' }}
                   >
                     Impeller {r.impellerNumber}
                   </Typography>
@@ -89,13 +98,13 @@ export default function FilteredAmpsPanel({ requestId }: Props) {
                   {display}
                 </Typography>
                 <Typography variant="caption" color="text.disabled" sx={{ fontSize: '0.6rem', display: 'block', textAlign: 'center' }}>
-                  avg for this filter
+                  Filter average
                 </Typography>
               </Paper>
-            </Grid>
+            </Box>
           );
         })}
-      </Grid>
+      </Box>
 
       <Dialog
         open={openImp !== null}
@@ -105,7 +114,7 @@ export default function FilteredAmpsPanel({ requestId }: Props) {
         slotProps={{ transition: { onEntered: () => setChartReady(true) } }}
       >
         <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          Impeller {openImp} — Current (A) · This Filter
+          Impeller {openImp}: Filtered Current (A)
           <IconButton onClick={closeDialog} size="small"><CloseIcon /></IconButton>
         </DialogTitle>
         <DialogContent>

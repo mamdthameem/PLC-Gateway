@@ -9,7 +9,7 @@ import ExpandableMetricCard from './ExpandableMetricCard';
 import ShotsBreakdownChart from './ShotsBreakdownChart';
 import UtilityGraph from './UtilityGraph';
 import ProductionGraph from './ProductionGraph';
-import EnergyTrendGraph from './EnergyTrendGraph';
+import TrendMetricGraph from './TrendMetricGraph';
 import { byParamOrder } from '../utils/unitConverters';
 import type { LifetimeParameter, ShotsBreakdownEntry } from '../types';
 
@@ -19,26 +19,40 @@ const POLL_INTERVAL_MS = 60_000;
 //
 // They are served from the plc_daily_trends rollup rather than raw history, which is what makes
 // "all-time" affordable: one row per day instead of ~1 M raw rows per year for the utility tags
-// alone. Passing no bounds is what selects the all-time series.
+// alone. Passing no bounds is what selects the all-time series; the server picks the granularity
+// from the span of history that exists and gap-fills every bucket in between.
 //
-// blast_time_sec and cycle_count are absent on purpose: plc_daily_trends has no column to plot
-// either from. They are scalar-only in Section 2 as well, so the two sections match.
-const GRAPHABLE: Record<string, { title: string; render: () => React.ReactNode }> = {
+// blast_time_sec and cycle_count ARE plotted now. plc_daily_trends has carried blast_on_sec and
+// cycle_count all along — the claim that it had no column to plot them from was simply wrong, and
+// the two tiles sat scalar-only for no reason.
+//
+// energy_per_casting_kwh_kg is deliberately NOT graphed, in either section. Lifetime kWh/kg drifts
+// by thousandths across a bucket, so any axis fitted to it magnifies rounding into a trend line
+// that invites conclusions the data does not support. The tile carries the number.
+//
+// No `title` here: the dialog inherits the tile's own name. These charts open from a Section 1
+// tile and Section 1 IS the lifetime block, so an "All-Time <name>" title restated the tile and
+// the block it sits in at once. `info` is the formula, behind the info icon beside that title.
+const GRAPHABLE: Record<string, { info: string; render: () => React.ReactNode }> = {
   machine_utility_pct: {
-    title: 'Machine Utility — all-time',
+    info: 'Blast time as a percentage of machine on-time',
     render: () => <UtilityGraph />,
   },
   production_qty_kg: {
-    title: 'Production — all-time',
+    info: 'Daily tonnage with running total',
     render: () => <ProductionGraph />,
   },
   energy_kwh_total: {
-    title: 'Energy — all-time',
-    render: () => <EnergyTrendGraph mode="energy" />,
+    info: 'Average impeller current × cycle duration, summed per day',
+    render: () => <TrendMetricGraph metric="energy" />,
   },
-  energy_per_casting_kwh_kg: {
-    title: 'Energy per Casting — all-time (kWh/kg)',
-    render: () => <EnergyTrendGraph mode="efficiency" />,
+  blast_time_sec: {
+    info: 'Duration the blast was ON',
+    render: () => <TrendMetricGraph metric="blastTime" />,
+  },
+  cycle_count: {
+    info: 'Count of completed blast cycles',
+    render: () => <TrendMetricGraph metric="cycleCount" />,
   },
 };
 
@@ -50,7 +64,8 @@ interface Props {
    */
   include: readonly string[];
   title: string;
-  subtitle: string;
+  /** Optional second line under the title. Most blocks need none: the title says it. */
+  subtitle?: string;
   /** The shots-per-refill chart is a Section 1-only output, so only the upper block asks for it. */
   showShotsChart?: boolean;
 }
@@ -105,18 +120,26 @@ export const LifetimeSection: React.FC<Props> = ({ include, title, subtitle, sho
           <Typography variant="h6" fontWeight={700} sx={{ fontSize: '1rem' }}>
             {title}
           </Typography>
-          <Typography variant="caption" color="text.secondary">
-            {subtitle}
-            {lastFetched && ` · last updated ${lastFetched.toLocaleTimeString()}`}
-          </Typography>
+          {subtitle && (
+            <Typography variant="caption" color="text.secondary" display="block">
+              {subtitle}
+            </Typography>
+          )}
         </Box>
-        <Tooltip title="Refresh now">
-          <span>
-            <IconButton onClick={load} size="small" disabled={loading}>
-              <RefreshIcon fontSize="small" />
-            </IconButton>
-          </span>
-        </Tooltip>
+        <Box display="flex" alignItems="center" gap={0.5}>
+          {lastFetched && (
+            <Typography variant="caption" color="text.secondary">
+              Last updated {lastFetched.toLocaleTimeString()}
+            </Typography>
+          )}
+          <Tooltip title="Refresh now">
+            <span>
+              <IconButton onClick={load} size="small" disabled={loading}>
+                <RefreshIcon fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
+        </Box>
       </Box>
 
       {loading && displayParams.length === 0 && (
@@ -142,7 +165,7 @@ export const LifetimeSection: React.FC<Props> = ({ include, title, subtitle, sho
                 parameterName={p.parameterName}
                 value={p.value}
                 updatedAt={p.updatedAt}
-                graphTitle={graphDef?.title}
+                graphInfo={graphDef?.info}
                 renderGraph={graphDef ? graphDef.render : undefined}
               />
             );
@@ -157,8 +180,7 @@ export const LifetimeSection: React.FC<Props> = ({ include, title, subtitle, sho
             Blast Cycles per Refill Interval
           </Typography>
           <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
-            Blast cycles run between each shot refill and the next — the last bar is the current
-            interval.
+            Cycles completed between consecutive refills.
           </Typography>
           <ShotsBreakdownChart data={shotsData} />
         </>

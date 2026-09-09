@@ -269,7 +269,9 @@ Empty array (not `null`) when no cycle in scope declared any casting-metal weigh
 Whole-history graph data for the 4 graphable Section 1 lifetime parameters
 (`machine_utility_pct`, `production_qty_kg`, `energy_kwh_total`, `energy_per_casting_kwh_kg`).
 Exactly the local dashboard's `/api/trends` — same rollup logic, same query params — put behind
-`AdminGuardMiddleware` instead of JWT so the cloud can reach it. `Live()` intentionally does **not**
+`AdminGuardMiddleware` instead of JWT so the cloud can reach it. (The local endpoint additionally
+accepts `bucket=auto` and returns an `X-Trend-Bucket` header; this one does not, so the cloud's
+existing `bucket` values keep working unchanged.) `Live()` intentionally does **not**
 carry this data: it changes at most once a minute (the `AggregationService` cadence) and the
 payload is comparatively large, so folding it into every `Live()` poll would be constant waste for
 data that's almost always unchanged since the last poll. Call this once per dashboard load, or on
@@ -279,7 +281,8 @@ its own slow timer — not on `Live()`'s poll cadence.
 | --- | --- |
 | Method / path | `GET /api/admin/trends` |
 | Query params | `bucket` = `hour` \| `day` \| `month` (default `day`); `start`, `end` — ISO 8601, optional except `bucket=hour` which requires both |
-| No bounds | Returns the full all-time series at the requested bucket size. Pass `bucket=month` with no `start`/`end` for the compact whole-history series (what the local dashboard's all-time graphs use) |
+| No bounds | Returns the full all-time series at the requested bucket size. Pass `bucket=month` with no `start`/`end` for the compact whole-history series |
+| **Gap-filled** | **Behaviour change.** Every bucket in the range is now returned, including buckets with no underlying data (all numeric fields `0`; `tonnageEnd` carried forward from the last known reading). Previously only buckets that had data were returned. A consumer that plots the array in order now gets a series where equal spacing means equal elapsed time; a consumer that COUNTS entries will see more of them for the same range, and one that treats every entry as "a day the plant ran" must now check `machineOnSec > 0` |
 | Validation errors | `400 {"error": "..."}` — `start` ≥ `end`, invalid `bucket`, or `bucket=hour` missing a bound |
 | Server failure | `500 {"error": "trends query failed"}` |
 

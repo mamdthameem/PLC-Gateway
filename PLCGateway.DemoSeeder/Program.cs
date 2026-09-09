@@ -271,6 +271,15 @@ Dictionary<string, TagDef> LoadTags(IConfiguration config)
 
 /// The end of the most recent shift that has actually finished, so the dataset never contains a
 /// timestamp in the future.
+///
+/// It deliberately stops at a CLEAN SHUTDOWN — machine off, blast off, impellers at zero. Ending
+/// mid-blast was tried, to make the live tiles read a running machine, and had to be reverted:
+/// CalculationService measures an open blast segment as `DateTime.Now - segmentStart`, and
+/// AggregationService keeps running in demo mode, so a frozen dataset with an unfinished blast
+/// gains an hour of blast_time_sec every hour. A demo left overnight would have opened showing a
+/// machine that had been blasting for sixteen hours straight. A stopped machine is the honest
+/// reading of a dataset that ends at a shift boundary; the amps tiles say so explicitly and show
+/// the last completed cycle's average alongside.
 DateTime LastCompletedShiftBoundary(DateTime now)
 {
     var day = now.Date;

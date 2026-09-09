@@ -13,37 +13,64 @@ import {
 const PERIOD_BUTTONS: { label: string; value: PeriodLabel }[] = [
   { label: 'Hour',  value: 'hour'  },
   { label: 'Shift', value: 'shift' },
-  { label: 'Day',   value: 'day'   },
+  { label: 'Yesterday', value: 'day' },
   { label: 'Week',  value: 'week'  },
   { label: 'Month', value: 'month' },
   { label: 'Year',  value: 'year'  },
 ];
 
-// Toggle rows: the tile label plus a short line saying what the parameter is, so the list reads
-// on its own without cross-referencing the tiles below. impeller_current has no PARAM_META entry
+// Toggle rows carry the tile name and nothing else — every row used to repeat its own formula
+// underneath, which said no more than the name already did. These control SECTION 2, so a
+// parameter with a section-specific name takes that one. impeller_current has no PARAM_META entry
 // because it is a panel, not a plc_filtered_parameters row, so it carries its own label.
-const PARAM_TOGGLES: { key: Section2ParamKey; label: string; hint: string }[] = [
-  { key: 'machine_utility_pct',       label: PARAM_META.machine_utility_pct.label,       hint: 'Blast time vs machine on-time' },
-  { key: 'production_qty_kg',         label: PARAM_META.production_qty_kg.label,         hint: 'Declared weight, split per item' },
-  { key: 'energy_kwh_total',          label: PARAM_META.energy_kwh_total.label,          hint: 'Total kWh over the cycles' },
-  { key: 'energy_per_casting_kwh_kg', label: PARAM_META.energy_per_casting_kwh_kg.label, hint: 'kWh per kg cast' },
-  { key: 'blast_time_sec',            label: PARAM_META.blast_time_sec.label,            hint: 'Seconds blasting' },
-  { key: 'cycle_count',               label: PARAM_META.cycle_count.label,               hint: 'Completed blast cycles' },
-  { key: 'impeller_current',          label: 'Impeller Current',                         hint: 'Average amps per impeller' },
+const section2Name = (key: keyof typeof PARAM_META): string =>
+  PARAM_META[key].section2Label ?? PARAM_META[key].label;
+
+const PARAM_TOGGLES: { key: Section2ParamKey; label: string }[] = [
+  { key: 'machine_utility_pct',       label: section2Name('machine_utility_pct') },
+  { key: 'production_qty_kg',         label: section2Name('production_qty_kg') },
+  { key: 'energy_kwh_total',          label: section2Name('energy_kwh_total') },
+  { key: 'energy_per_casting_kwh_kg', label: section2Name('energy_per_casting_kwh_kg') },
+  { key: 'blast_time_sec',            label: section2Name('blast_time_sec') },
+  { key: 'cycle_count',               label: section2Name('cycle_count') },
+  { key: 'impeller_current',          label: 'Impeller Current' },
 ];
 
-function periodToRange(period: PeriodLabel): { start: string; end: string } {
-  const now  = new Date();
+/**
+ * The window a preset button covers.
+ *
+ * Returns Date objects, NOT `toISOString().slice(0, 16)` strings. That slice dropped the trailing
+ * "Z", so `new Date(...)` re-parsed a UTC clock reading as LOCAL time and slid every preset window
+ * back by the local UTC offset — 5h30m in IST. A "Day" applied at 07:30 fetched 02:00 to 02:00
+ * instead of 07:30 to 07:30. The slice existed to match the datetime-local input format, but the
+ * custom-range fields hold their own state and never read this, so nothing needed that shape.
+ *
+ * "Day" is the odd one out by design: it is the previous COMPLETE calendar day rather than a
+ * rolling 24 hours, so it always covers one whole day and never spills onto a second date. The
+ * rolling form put the tail of the window on tomorrow's date whenever it was applied after
+ * midnight. Every other preset is still a rolling window ending now.
+ */
+function periodToRange(period: PeriodLabel): { start: Date; end: Date } {
+  const now = new Date();
+
+  if (period === 'day') {
+    const start = new Date(now);
+    start.setDate(now.getDate() - 1);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(start);
+    end.setDate(start.getDate() + 1);   // Date rolls month/year boundaries over for us.
+    return { start, end };
+  }
+
   const from = new Date(now);
   switch (period) {
     case 'hour':  from.setHours(now.getHours() - 1);       break;
     case 'shift': from.setHours(now.getHours() - 8);       break;
-    case 'day':   from.setDate(now.getDate() - 1);         break;
     case 'week':  from.setDate(now.getDate() - 7);         break;
     case 'month': from.setMonth(now.getMonth() - 1);       break;
     case 'year':  from.setFullYear(now.getFullYear() - 1); break;
   }
-  return { start: from.toISOString().slice(0, 16), end: now.toISOString().slice(0, 16) };
+  return { start: from, end: now };
 }
 
 export type FilterCalcState = 'idle' | 'submitting' | 'polling' | 'done' | 'error';
@@ -130,8 +157,8 @@ export default function FilterBar({ calcState, appliedContext, onApply, onClear 
         periodLabel = null;
       } else {
         const range = periodToRange(activePeriod);
-        filterStart = new Date(range.start).toISOString();
-        filterEnd   = new Date(range.end).toISOString();
+        filterStart = range.start.toISOString();
+        filterEnd   = range.end.toISOString();
         periodLabel = activePeriod;
       }
 
@@ -163,24 +190,18 @@ export default function FilterBar({ calcState, appliedContext, onApply, onClear 
       <Box display="flex" alignItems="flex-start" justifyContent="space-between" flexWrap="wrap" gap={1} mb={2}>
         <Box>
           <Typography variant="subtitle1" fontWeight={700} sx={{ fontSize: '1rem' }}>
-            Filter Parameters
-          </Typography>
-          <Typography variant="caption" color="text.secondary">
-            Applies to the parameters below only. Everything above this bar is Section 1-only and
-            never responds to the filter.
+            Filters
           </Typography>
         </Box>
 
         <Box display="flex" alignItems="center" gap={1} flexWrap="wrap">
-          {isFiltered ? (
+          {isFiltered && (
             <>
-              <Chip label={`Filtered · ${appliedContext!.label}`} color="primary" size="small" />
+              <Chip label={appliedContext!.label} color="primary" size="small" />
               <Button size="small" variant="outlined" startIcon={<FilterAltOffIcon />} onClick={onClear} disabled={busy}>
-                Clear Filter
+                Reset
               </Button>
             </>
-          ) : (
-            <Chip label="No filter · showing Section 1 real-time" size="small" variant="outlined" />
           )}
         </Box>
       </Box>
@@ -267,7 +288,7 @@ export default function FilterBar({ calcState, appliedContext, onApply, onClear 
             <Box mb={1.5}>
               <LinearProgress />
               <Typography variant="caption" color="text.secondary" display="block" mt={0.5}>
-                {calcState === 'submitting' ? 'Submitting…' : 'Calculating — please wait…'}
+                {calcState === 'submitting' ? 'Submitting…' : 'Calculating, please wait…'}
               </Typography>
             </Box>
           )}
@@ -305,7 +326,7 @@ export default function FilterBar({ calcState, appliedContext, onApply, onClear 
             }}
           >
             <Typography variant="subtitle2" fontWeight={700}>
-              Parameters to Calculate
+              Parameters
             </Typography>
             <Chip
               size="small"
@@ -317,14 +338,14 @@ export default function FilterBar({ calcState, appliedContext, onApply, onClear 
           </Box>
 
           <Box sx={{ py: 0.5 }}>
-            {PARAM_TOGGLES.map(({ key, label, hint }) => {
+            {PARAM_TOGGLES.map(({ key, label }) => {
               const disabled = isDisabledParam(key);
               const row = (
                 <FormControlLabel
                   disabled={busy || disabled}
                   sx={{
                     display: 'flex',
-                    alignItems: 'flex-start',
+                    alignItems: 'center',
                     width: '100%',
                     m: 0,
                     px: 1.25, py: 0.6,
@@ -340,18 +361,9 @@ export default function FilterBar({ calcState, appliedContext, onApply, onClear 
                     />
                   }
                   label={
-                    <Box sx={{ minWidth: 0 }}>
-                      <Typography variant="body2" sx={{ fontWeight: 500, lineHeight: 1.35 }}>
-                        {label}
-                      </Typography>
-                      <Typography
-                        variant="caption"
-                        color="text.secondary"
-                        sx={{ display: 'block', fontSize: '0.68rem', lineHeight: 1.3 }}
-                      >
-                        {disabled ? 'Machine-level — not per item' : hint}
-                      </Typography>
-                    </Box>
+                    <Typography variant="body2" sx={{ fontWeight: 500, lineHeight: 1.35, minWidth: 0 }}>
+                      {label}
+                    </Typography>
                   }
                 />
               );

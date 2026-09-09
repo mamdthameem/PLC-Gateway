@@ -8,6 +8,7 @@ import { fetchFilterResults, fetchFilterCycles, fetchFilterMetals } from '../ser
 import ExpandableMetricCard from './ExpandableMetricCard';
 import UtilityGraph from './UtilityGraph';
 import CycleDataGraph from './CycleDataGraph';
+import TrendMetricGraph from './TrendMetricGraph';
 import ItemProductionGraph from './ItemProductionGraph';
 import FilteredAmpsPanel from './FilteredAmpsPanel';
 import { byParamOrder } from '../utils/unitConverters';
@@ -28,18 +29,14 @@ interface Props {
   selectedParameters: Section2ParamKey[];
 }
 
-function SectionHeading({ title, note }: { title: string; note?: string }) {
+function SectionHeading({ title, count }: { title: string; count?: string }) {
   return (
-    <>
-      <Typography variant="subtitle2" fontWeight={600} sx={{ mb: note ? 0.25 : 1 }}>
+    <Box display="flex" alignItems="center" gap={1} sx={{ mb: 1 }}>
+      <Typography variant="subtitle2" fontWeight={600}>
         {title}
       </Typography>
-      {note && (
-        <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
-          {note}
-        </Typography>
-      )}
-    </>
+      {count && <Chip label={count} size="small" variant="outlined" sx={{ height: 18, fontSize: '0.68rem' }} />}
+    </Box>
   );
 }
 
@@ -59,8 +56,8 @@ function ItemProductionTable({ items }: { items: FilteredMetalProduction[] }) {
       <Table size="small">
         <TableHead>
           <TableRow>
-            <TableCell sx={{ fontWeight: 700 }}>Casting Item</TableCell>
-            <TableCell align="right" sx={{ fontWeight: 700 }}>Declared Weight (kg)</TableCell>
+            <TableCell sx={{ fontWeight: 700 }}>Item</TableCell>
+            <TableCell align="right" sx={{ fontWeight: 700 }}>Weight (kg)</TableCell>
           </TableRow>
         </TableHead>
         <TableBody>
@@ -103,14 +100,14 @@ function CycleTable({ cycles }: { cycles: FilteredCycle[] }) {
       <Table size="small" stickyHeader>
         <TableHead>
           <TableRow>
-            <TableCell sx={{ fontWeight: 700 }}>Cycle #</TableCell>
-            <TableCell sx={{ fontWeight: 700 }}>Start</TableCell>
-            <TableCell sx={{ fontWeight: 700 }}>End</TableCell>
+            <TableCell sx={{ fontWeight: 700 }}>Cycle No.</TableCell>
+            <TableCell sx={{ fontWeight: 700 }}>Start Time</TableCell>
+            <TableCell sx={{ fontWeight: 700 }}>End Time</TableCell>
             <TableCell sx={{ fontWeight: 700 }}>Item 1</TableCell>
             <TableCell sx={{ fontWeight: 700 }}>Item 2</TableCell>
             <TableCell sx={{ fontWeight: 700 }}>Item 3</TableCell>
             <TableCell sx={{ fontWeight: 700 }}>Item 4</TableCell>
-            <TableCell align="right" sx={{ fontWeight: 700 }}>Production (kg)</TableCell>
+            <TableCell align="right" sx={{ fontWeight: 700 }}>Weight (kg)</TableCell>
             <TableCell align="right" sx={{ fontWeight: 700 }}>Energy (kWh)</TableCell>
           </TableRow>
         </TableHead>
@@ -136,16 +133,22 @@ function CycleTable({ cycles }: { cycles: FilteredCycle[] }) {
 
 // Graph titles. Every graphable parameter opens its chart from its own tile.
 //
-// Utility is the exception: its graph is a time series, and cycle/item filters carry no
-// meaningful time axis (filter_start/filter_end are NOT NULL, so both are set to NOW() as a
-// placeholder). Its tile therefore has no graph in those modes — the scalar still shows.
+// The split is about whether a chart needs a TIME axis. Cycle and item filters carry no meaningful
+// one — filter_start/filter_end are NOT NULL, so both are set to NOW() as a placeholder — so a
+// time-bucketed chart in those modes would plot a window that does not exist. Those tiles show the
+// scalar only.
+//
+// energy_per_casting_kwh_kg has no chart in either section: per-cycle kWh/kg varies by thousandths
+// across a filter, and an axis fitted to that turns rounding noise into an apparent trend. It was
+// the one chart on the page that actively misinformed.
 const GRAPHABLE_ALL_MODES: Record<string, string> = {
-  production_qty_kg:         'Production per Casting Item',
-  energy_kwh_total:          'Energy per Cycle',
-  energy_per_casting_kwh_kg: 'Efficiency per Cycle (kWh/kg)',
+  production_qty_kg: 'Production per Casting Item',
+  energy_kwh_total:  'Energy per Cycle',
 };
 const GRAPHABLE_TIME_ONLY: Record<string, string> = {
-  machine_utility_pct: 'Utility Trend',
+  machine_utility_pct: 'Machine Utility',
+  blast_time_sec:      'Blast Time per Interval',
+  cycle_count:         'Blast Cycles per Interval',
 };
 
 export default function FilterResultsView({
@@ -225,13 +228,18 @@ export default function FilterResultsView({
       case 'production_qty_kg':
         return () => <ItemProductionGraph requestId={requestId} />;
       case 'energy_kwh_total':
-        return () => <CycleDataGraph requestId={requestId} mode="energy" />;
-      case 'energy_per_casting_kwh_kg':
-        return () => <CycleDataGraph requestId={requestId} mode="efficiency" />;
-      // blast_time_sec and cycle_count are scalar-only in BOTH sections. Section 1 has no
-      // plc_daily_trends column to plot them from; Section 2 could have plotted them per cycle but
-      // the asymmetry between the sections was more confusing than the charts were useful. Their
-      // per-cycle detail is still on screen — in the Cycle Breakdown table below.
+        return () => <CycleDataGraph requestId={requestId} />;
+      // Blast time and cycle count are bucketed over the filter window, the same series and the
+      // same component Section 1 uses — so the two sections show the same shape at two scopes
+      // rather than one per-cycle chart and one per-day chart that cannot be compared.
+      case 'blast_time_sec':
+        return isTimeFilter
+          ? () => <TrendMetricGraph metric="blastTime" windowStart={filterStart} windowEnd={filterEnd} />
+          : undefined;
+      case 'cycle_count':
+        return isTimeFilter
+          ? () => <TrendMetricGraph metric="cycleCount" windowStart={filterStart} windowEnd={filterEnd} />
+          : undefined;
       default:
         return undefined;
     }
@@ -242,7 +250,7 @@ export default function FilterResultsView({
       <Box display="flex" alignItems="flex-start" justifyContent="space-between" flexWrap="wrap" gap={1} mb={2}>
         <Box>
           <Typography variant="h6" fontWeight={700} sx={{ fontSize: '1rem', mb: 0.5 }}>
-            Section 2 — Filtered · {label}
+            Filtered Parameters
           </Typography>
 
           {/* The item being viewed is the easiest scope to lose track of, so it gets a chip of its
@@ -257,16 +265,16 @@ export default function FilterResultsView({
             />
           )}
 
-          {isTimeFilter && (
-            <Typography variant="caption" color="text.secondary" display="block">
-              {new Date(filterStart).toLocaleString()} → {new Date(filterEnd).toLocaleString()}
-            </Typography>
-          )}
+          <Typography variant="caption" color="text.secondary" display="block">
+            {isTimeFilter
+              ? `${new Date(filterStart).toLocaleString()} to ${new Date(filterEnd).toLocaleString()}`
+              : label}
+          </Typography>
 
           {itemName && (
             <Typography variant="caption" color="text.secondary" display="block">
               Every value below is computed from only the cycles that declared this item.
-              Machine utility is not shown — machine on-time is not attributable to a single item.
+              Machine Utility is not shown: machine on-time is not attributable to a single item.
             </Typography>
           )}
         </Box>
@@ -279,7 +287,7 @@ export default function FilterResultsView({
             label, filterBy, filterStart, filterEnd, itemName, results, cycles, items,
           })}
         >
-          Download Excel
+          Export
         </Button>
       </Box>
 
@@ -314,12 +322,7 @@ export default function FilterResultsView({
       {showProduction && (
         <>
           <Divider sx={{ mt: 3, mb: 2 }} />
-          <SectionHeading
-            title="Production by Casting Item"
-            note={itemName
-              ? `Declared weight for "${itemName}" across the cycles that declared it. Other items declared in the same cycles are excluded from this scope.`
-              : "Summed declared casting-item weights for this filter. Section 1 reports production from the PLC's Tonnage accumulator instead, so the two figures answer different questions and need not match."}
-          />
+          <SectionHeading title="Production by Item" />
           {items.length > 0
             ? <ItemProductionTable items={items} />
             : <Alert severity="info">No casting item weights were declared for the cycles in this filter.</Alert>}
@@ -329,7 +332,10 @@ export default function FilterResultsView({
       {showCycleTable && (
         <>
           <Divider sx={{ mt: 3, mb: 2 }} />
-          <SectionHeading title={`Cycle Breakdown (${cycles.length} ${cycles.length === 1 ? 'cycle' : 'cycles'})`} />
+          <SectionHeading
+            title="Cycle Log"
+            count={`${cycles.length} ${cycles.length === 1 ? 'cycle' : 'cycles'}`}
+          />
           {cycles.length > 0
             ? <CycleTable cycles={cycles} />
             : <Alert severity="info">No completed blast cycles fall within this filter.</Alert>}
@@ -339,13 +345,7 @@ export default function FilterResultsView({
       {showAmps && (
         <>
           <Divider sx={{ mt: 3, mb: 2 }} />
-          <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 0.25 }}>
-            Impeller Current
-          </Typography>
-          <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
-            Average current per impeller for this filter&apos;s cycles — same tile-and-chart layout
-            as the live Amps panel, but scoped to the filter instead of live readings.
-          </Typography>
+          <SectionHeading title="Impeller Current (Filtered)" />
           <FilteredAmpsPanel requestId={requestId} />
         </>
       )}

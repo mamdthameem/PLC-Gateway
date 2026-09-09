@@ -61,7 +61,7 @@ export default function SpareHealthTable() {
           if (d.triggerActive && d.thresholdHours > 0) {
             maybeEnqueue(
               alertKey,
-              `Maintenance required — Impeller ${d.impellerNum}, ${d.spareName}: ` +
+              `Maintenance required, Impeller ${d.impellerNum}, ${d.spareName}: ` +
               `${formatRunHours(d.currentRunHours)} run (threshold ${formatRunHours(d.thresholdHours)})`
             );
           }
@@ -70,7 +70,7 @@ export default function SpareHealthTable() {
           if (d.lastReplacedAt && new Date(d.lastReplacedAt).getTime() >= dayAgo) {
             maybeEnqueue(
               replKey,
-              `Spare replaced — Impeller ${d.impellerNum}, ${d.spareName}. ` +
+              `Spare replaced, Impeller ${d.impellerNum}, ${d.spareName}. ` +
               `Run hours reset. Replaced at ${new Date(d.lastReplacedAt).toLocaleString()}`
             );
           }
@@ -97,11 +97,17 @@ export default function SpareHealthTable() {
 
   return (
     <Box>
-      <Typography variant="h6" sx={{ mb: connected ? 2 : 0.5 }}>Spare Parts Health</Typography>
+      <Typography variant="h6" sx={{ mb: 0.25 }}>Spare Part Life</Typography>
+
+      {/* The cells read "12.0 hrs / 300.0 hrs". One key line above the table explains the pair,
+          so no cell and no column needs its own caption. */}
+      <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: connected ? 1.5 : 0.5 }}>
+        Run hours / replacement limit
+      </Typography>
 
       {!connected && (
         <Alert severity="warning" sx={{ mb: 2, py: 0.25 }}>
-          PLC disconnected — run hours below are the last values read
+          PLC disconnected. Run hours below are the last values read
           {lastScanAt ? ` at ${new Date(lastScanAt).toLocaleString()}` : ''} and are not advancing.
         </Alert>
       )}
@@ -129,7 +135,7 @@ export default function SpareHealthTable() {
               <TableCell sx={{ fontWeight: 700, minWidth: 150 }}>Spare Part</TableCell>
               {impellers.map(i => (
                 <TableCell key={i} align="center" sx={{ fontWeight: 700, minWidth: 110 }}>
-                  Imp {i}
+                  Impeller {i}
                 </TableCell>
               ))}
             </TableRow>

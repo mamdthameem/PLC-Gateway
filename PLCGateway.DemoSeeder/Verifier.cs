@@ -20,7 +20,10 @@ public sealed class Verifier
     // Sanity bands. Outside these, the generator profile is wrong and the report says so.
     private const double ShotUsageMin = 3.0, ShotUsageMax = 8.0;
     private const double UtilityMin = 62.0, UtilityMax = 80.0;
-    private const double KwhPerKgMin = 0.15, KwhPerKgMax = 0.30;
+    // Tracks the impeller-current profile: energy is Σ(avg_amps × duration_hours), so this band
+    // moves whenever AmpsBase does. Widened when the running current was retuned from a 20–35 A
+    // spread down to a ~20 A plateau. It is a drift alarm for the generator, not a client spec.
+    private const double KwhPerKgMin = 0.11, KwhPerKgMax = 0.30;
 
     public Verifier(string connectionString, DatabaseService db, CalculationService calc)
     {
@@ -188,6 +191,7 @@ public sealed class Verifier
     {
         decimal? cycleCount = lifetime.GetValueOrDefault("cycle_count");
         decimal cycleRows = await ScalarAsync(conn, "SELECT COUNT(*) FROM plc_cycles");
+
         Check("cycle_count == COUNT(plc_cycles)", cycleCount == cycleRows,
               $"lifetime {cycleCount} vs table {cycleRows}");
 

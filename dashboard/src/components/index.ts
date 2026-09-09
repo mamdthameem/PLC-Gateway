@@ -12,5 +12,5 @@ export { default as ExpandableMetricCard } from './ExpandableMetricCard';
 export { default as UtilityGraph } from './UtilityGraph';
 export { default as ProductionGraph } from './ProductionGraph';
 export { default as CycleDataGraph } from './CycleDataGraph';
-export { default as EnergyTrendGraph } from './EnergyTrendGraph';
+export { default as TrendMetricGraph } from './TrendMetricGraph';
 export { default as AmpsGraph } from './AmpsGraph';

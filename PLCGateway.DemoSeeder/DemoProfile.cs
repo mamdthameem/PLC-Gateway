@@ -52,7 +52,12 @@ public static class DemoProfile
 
     // Reblast: the load goes back in for a short second pass. It produces a genuine second cycle
     // (its own rising edge) that consumes energy and declares nothing, so production_kg is 0.
-    public const double ReblastProbability = 0.04;
+    //
+    // DISABLED for the demo dataset. A reblast is real plant behaviour, but in a demo it makes
+    // cycle_count disagree with the number of loads actually cast — ~4 % of cycles produced
+    // nothing — and every reading of the Blast Cycles tile then has to be qualified. Set this
+    // above 0 to model a plant that reblasts.
+    public const double ReblastProbability = 0.0;
     public const double ReblastPauseMinutesMin = 0.5;
     public const double ReblastPauseMinutesMax = 1.0;
     public const double ReblastMinutesMin = 2.0;
@@ -89,11 +94,23 @@ public static class DemoProfile
     public const int MinRefillWeightDeltaKg = 2;
 
     // ── Impeller current ────────────────────────────────────────────────────────────────────
+    // The trace a reader expects from a blast cycle: flat at ZERO while idle, a clean ramp to the
+    // running current when the blast starts, steady fluctuation around it for the whole blast, and
+    // back to zero at the end.
+    //
+    // Previously the running current was drawn from a 20–35 A spread — so each impeller sat at its
+    // own arbitrary level and the panel had no recognisable working point — and idle was 0.35 A, a
+    // floor that never actually reaches zero on the chart. Both are fixed: every impeller runs at
+    // ~20 A, and idle is a true zero.
     public const int ImpellerCount = 10;
-    public const double AmpsBaseMin = 20.0;
-    public const double AmpsBaseMax = 35.0;
-    public const double AmpsIdle = 0.35;              // near zero, not zero
-    public const double AmpsNoise = 0.6;
+    // These are the base figures BEFORE the wear and load multipliers below, which together add
+    // up to ~12 %. Set so the running current a reader actually sees on the chart plateaus at
+    // roughly 20 A, not so the base itself is 20 A — that was the mistake in the first pass and it
+    // put the plateau at 23 A with the axis topping out at 25.
+    public const double AmpsBaseMin = 18.2;
+    public const double AmpsBaseMax = 19.0;
+    public const double AmpsIdle = 0.0;               // a true zero between cycles
+    public const double AmpsNoise = 0.45;             // steady fluctuation, same band all cycle
     public const double AmpsStartupSeconds = 20.0;    // ramp at blast start
     public const double AmpsLoadFactor = 0.06;        // heavier load draws slightly more
 

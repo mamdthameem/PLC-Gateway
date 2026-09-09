@@ -430,7 +430,7 @@ Section 1 and does not respond to any filter.
 | 1 | `machine_utility_pct` | Machine Utility (%) | `blast_time_sec ÷ machine_on_time_sec × 100` over the window | Utility trend — **time filters only** (cycle/item filters have no time axis) |
 | 2 | `production_qty_kg` | Production (kg) | `Σ` declared `Casting metal N weight` over the in-scope cycles. **Not from `Tonnage`** | Bar chart: declared weight per casting item |
 | 3 | `energy_kwh_total` | Total Energy (kWh) | `Σ plc_cycles.energy_kwh` over the in-scope cycles | Bars: energy per cycle |
-| 4 | `energy_per_casting_kwh_kg` | Energy per Casting | `energy_kwh_total ÷ total declared weight` (same denominator as #2) | Line: efficiency per cycle |
+| 4 | `energy_per_casting_kwh_kg` | Energy per Casting | `energy_kwh_total ÷ total declared weight` (same denominator as #2) | **No graph, either section** — kWh/kg drifts by thousandths across a bucket, so a fitted axis turns rounding into an apparent trend |
 | 5 | `blast_time_sec` | Blast Time | Seconds `Blast ON/OFF` was true in the window | **None — scalar only** (see below) |
 | 6 | `cycle_count` | Blast Cycles | Rising edges `0→1` on `Blast ON/OFF` in the window | **None — scalar only** (see below) |
 | 7 | `impeller_current` | Impeller Current (×10) | `AVG(value_num)` per cycle×impeller; the tile shows a duration-weighted average | One point per cycle, per impeller |
@@ -707,7 +707,7 @@ port-forwarding, config placeholders) is in **`DEPLOYMENT-NOTES.md`**.
 | `GET /api/shotsbreakdown` | Section 1 shots-per-refill table |
 | `GET /api/amps` | Live current for the 10 impellers |
 | `GET /api/sparestatus` · `/alerts` | Spare grid (140 rows) · triggered subset |
-| `GET /api/trends` | **Graph series.** `bucket=day` (default) / `month` read the `plc_daily_trends` rollup; omit `start`/`end` for all-time. `bucket=hour` is computed live from Tier 2 and requires both bounds. |
+| `GET /api/trends` | **Graph series.** `bucket=auto` (default) picks the granularity from the span of history that exists and reports it in the `X-Trend-Bucket` response header; `day`/`month` read the `plc_daily_trends` rollup; omit `start`/`end` for all-time. `bucket=hour` is computed live from Tier 2 and requires both bounds. **Every series is gap-filled** — a bucket with no underlying rows comes back as zeros, never omitted, so equal spacing on a chart means equal elapsed time. |
 | `GET /api/historical?name=&start=&end=` | Raw Tier 2 points for one tag (used by the per-impeller amps trace) |
 | `GET /api/cycles/latest` | Most recent completed cycle |
 | `POST /api/filter` → `GET /api/filter/{id}/status` | Submit a Section 2 request, then poll. Body may carry `selectedParameters: string[]` — omit for "all" |

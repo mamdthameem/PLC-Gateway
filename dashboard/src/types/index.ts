@@ -31,7 +31,14 @@ export interface LifetimeParameter {
 
 // Section 1 — plc_shots_breakdown
 export interface ShotsBreakdownEntry {
+  /** The refill that CLOSED this interval — what the row is keyed on, and what the bar is labelled with. */
   refillTimestamp: string;
+  /**
+   * The refill that OPENED this interval. Supplied by the API rather than derived from the
+   * previous row, because the FIRST row's opener is not in plc_shots_breakdown at all — only the
+   * server can recover it from the Tier 2 refill events.
+   */
+  intervalStartTimestamp: string | null;
   blastCount: number;
 }
 
@@ -78,6 +85,13 @@ export interface DailyTrend {
 // 'hour' is computed live from Tier 2 over a bounded window (Section 2 short filters);
 // 'day'/'month' are served from the plc_daily_trends rollup and are safe for all-time ranges.
 export type TrendBucket = 'hour' | 'day' | 'month';
+
+/** One completed cycle's average current for a single impeller (whole-history amps view). */
+export interface CycleAmp {
+  cycleNumber: number;
+  blastEnd: string;
+  avgAmps: number | null;
+}
 
 // Latest blast cycle (plc_cycles)
 export interface LatestCycle {

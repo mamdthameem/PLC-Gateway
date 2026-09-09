@@ -37,4 +37,5 @@ public class CyclesController : ControllerBase
             return StatusCode(500, new { error = "Failed to fetch latest cycle" });
         }
     }
+
 }

@@ -95,16 +95,24 @@ The dashboard build is **pinned to the URL path it will be served from**. Vite b
 into `index.html`, the asset URLs, the React Router basename and the API prefix at build time, so
 it cannot be changed by moving files afterwards.
 
-The path lives in one place, [`dashboard/.env.production`](dashboard/.env.production):
+The path lives in one place, [`dashboard/.env.production`](dashboard/.env.production). It ships
+**commented out**, i.e. root hosting, because that is what a local `dotnet run` and a root-bound
+IIS site both need:
 
 ```
-VITE_BASE_PATH=/shotsense/
+# VITE_BASE_PATH=/shotsense/
 ```
+
+> Uncomment it only for sub-path hosting. A build made with it set renders a **white screen**
+> anywhere not serving under that exact prefix: `index.html` requests
+> `/shotsense/assets/index-*.js`, the server has the file at `/assets/index-*.js`, nothing loads
+> and the page is blank with no visible error. Always confirm the emitted path (below) before
+> publishing.
 
 | Hosting layout | `VITE_BASE_PATH` | IIS application name |
 | -------------- | ---------------- | -------------------- |
 | Under Default Web Site as `/shotsense` | `/shotsense/` (leading **and** trailing slash) | `shotsense` |
-| As its own site at the root | remove the line, or leave it blank | n/a |
+| As its own site at the root, or a local `dotnet run` | leave the line commented out (**the default**) | n/a |
 
 **The value must match the IIS application alias in section 5 exactly.** If they disagree you get
 a blank page with `404`s on `/assets/*`, or a console warning that `<Router basename=...> is not
@@ -122,6 +130,10 @@ npm run build    # emits into ..\PLCGateway\wwwroot
 `PLCGateway\wwwroot\index.html` must reference the intended path:
 
 ```html
+<!-- root hosting (the default) -->
+<script type="module" crossorigin src="/assets/index-XXXXXXXX.js"></script>
+
+<!-- only if VITE_BASE_PATH=/shotsense/ is uncommented -->
 <script type="module" crossorigin src="/shotsense/assets/index-XXXXXXXX.js"></script>
 ```
 

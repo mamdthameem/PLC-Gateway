@@ -25,7 +25,7 @@ export function formatPercent(val: number): string {
 
 export function formatKwh(val: number): string {
   if (!isFinite(val)) return '—';
-  return `${val.toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 })} kWh`;
+  return `${val.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} kWh`;
 }
 
 export function formatKwhPerKg(val: number): string {
@@ -93,31 +93,27 @@ export function byParamOrder<T extends { parameterName: string }>(a: T, b: T): n
 /**
  * Tile metadata.
  *
- * `subtitle` is the one-line explanation printed under the value. It carries its weight where a
- * parameter means something different in each section — Section 1 production is the PLC's Tonnage
- * accumulator while Section 2 production is the declared casting-item weight, and with both
- * sections now on screen at once those two tiles are visible side by side. Where a subtitle would
- * differ per section, `section2Subtitle` overrides it.
+ * Tile names are noun phrases and carry no explanatory caption: the name plus the unit on the
+ * value is the whole tile. Production is the one parameter whose FORMULA differs between the
+ * sections (Section 1 is the PLC's Tonnage accumulator, Section 2 is declared casting-item
+ * weight), and with both sections on screen at once those two tiles sit side by side — so the
+ * distinction is carried in the name itself via `section2Label` rather than in a caption.
  */
 export const PARAM_META: Record<
   string,
-  { label: string; unit?: string; subtitle?: string; section2Subtitle?: string }
+  { label: string; section2Label?: string; unit?: string }
 > = {
   machine_utility_pct: {
     label: 'Machine Utility',
     unit: '%',
-    subtitle: 'blast time as a share of machine on-time',
   },
   production_qty_kg: {
-    label: 'Production',
-    subtitle: "from the PLC's Tonnage accumulator",
-    section2Subtitle: 'declared casting-item weight',
+    label: 'Production (Tonnage)',
+    section2Label: 'Production (Item Weight)',
   },
   energy_kwh_total: { label: 'Total Energy' },
   energy_per_casting_kwh_kg: {
     label: 'Energy per Casting',
-    subtitle: 'per kg from the Tonnage accumulator',
-    section2Subtitle: 'per kg of declared casting-item weight',
   },
   blast_time_sec:           { label: 'Blast Time' },
   cycle_count:              { label: 'Blast Cycles', unit: 'cycles' },
@@ -126,7 +122,6 @@ export const PARAM_META: Record<
   effective_shots_usage_kg_per_ton: {
     label: 'Effective Shots Usage',
     unit: 'kg/T',
-    subtitle: 'shot consumed per tonne of casting',
   },
 };
 

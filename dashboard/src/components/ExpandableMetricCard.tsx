@@ -5,6 +5,7 @@ import {
 } from '@mui/material';
 import BarChartIcon from '@mui/icons-material/BarChart';
 import CloseIcon from '@mui/icons-material/Close';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import { formatParameterValue, PARAM_META } from '../utils/unitConverters';
 
 interface Props {
@@ -12,17 +13,22 @@ interface Props {
   value: string;
   updatedAt?: string;
   graphTitle?: string;
+  /**
+   * What the chart measures, in prose. Sits behind an info icon next to the dialog title rather
+   * than in a caption under it: it is reference material a reader wants once, not every time.
+   */
+  graphInfo?: string;
   renderGraph?: () => React.ReactNode;
   /**
-   * Section 2 tiles pass this so a parameter whose meaning differs between the sections picks up
-   * PARAM_META.section2Subtitle instead of the Section 1 wording. Both sections are on screen at
-   * once now, so "Production" appears twice with two different formulas behind it.
+   * Section 2 tiles pass this so a parameter whose formula differs between the sections picks up
+   * PARAM_META.section2Label instead of the Section 1 name. Both sections are on screen at once,
+   * so Production appears twice: "Production (Tonnage)" above, "Production (Item Weight)" below.
    */
   section?: 1 | 2;
 }
 
 export default function ExpandableMetricCard({
-  parameterName, value, updatedAt, graphTitle, renderGraph, section = 1,
+  parameterName, value, updatedAt, graphTitle, graphInfo, renderGraph, section = 1,
 }: Props) {
   const [open, setOpen] = useState(false);
 
@@ -34,8 +40,7 @@ export default function ExpandableMetricCard({
   const closeDialog = () => { setOpen(false); setChartReady(false); };
 
   const meta      = PARAM_META[parameterName];
-  const label     = meta?.label ?? parameterName;
-  const subtitle  = (section === 2 ? meta?.section2Subtitle : undefined) ?? meta?.subtitle;
+  const label     = (section === 2 ? meta?.section2Label : undefined) ?? meta?.label ?? parameterName;
   const formatted = formatParameterValue(parameterName, value);
   const isStatus  = parameterName === 'machine_status';
   const isOn      = value === '1';
@@ -74,7 +79,6 @@ export default function ExpandableMetricCard({
             fontWeight: 600,
             letterSpacing: '0.07em',
             fontSize: '0.68rem',
-            textTransform: 'uppercase',
           }}
         >
           {label}
@@ -104,15 +108,6 @@ export default function ExpandableMetricCard({
           </Typography>
         )}
 
-        {subtitle && (
-          <Typography
-            variant="caption"
-            sx={{ color: 'text.secondary', fontSize: '0.65rem', lineHeight: 1.35, mt: 0.25 }}
-          >
-            {subtitle}
-          </Typography>
-        )}
-
         {updatedAt && (
           <Typography variant="caption" sx={{ color: 'text.disabled', fontSize: '0.62rem', mt: 'auto' }}>
             {new Date(updatedAt).toLocaleTimeString()}
@@ -124,19 +119,30 @@ export default function ExpandableMetricCard({
         <Dialog
           open={open}
           onClose={closeDialog}
-          maxWidth="md"
+          maxWidth="lg"
           fullWidth
           slotProps={{ transition: { onEntered: () => setChartReady(true) } }}
         >
           <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            {graphTitle ?? label}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+              {/* Defaults to the tile's own name: the dialog opened FROM that tile, so a separate
+                  title can only repeat it or contradict it. */}
+              {graphTitle ?? label}
+              {graphInfo && (
+                <Tooltip title={graphInfo}>
+                  <InfoOutlinedIcon sx={{ fontSize: 17, color: 'text.disabled', cursor: 'help' }} />
+                </Tooltip>
+              )}
+            </Box>
             <IconButton onClick={closeDialog} size="small">
               <CloseIcon />
             </IconButton>
           </DialogTitle>
-          <DialogContent>
+          {/* Charts need room: a dense series in a 600 px dialog was the reason axis labels had to
+              be thinned to the point of disappearing. */}
+          <DialogContent sx={{ pb: 3 }}>
             {chartReady ? renderGraph?.() : (
-              <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 320 }}>
+              <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 420 }}>
                 <CircularProgress />
               </Box>
             )}

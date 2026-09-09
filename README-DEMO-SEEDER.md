@@ -61,7 +61,10 @@ connection string.
 
 ```bash
 # Generate the month, then run the real pipeline and print the verification report
-PlcApi.Controllers.MachineStatusController.Get
+dotnet run --project PLCGateway.DemoSeeder -- seed
+
+# Re-seed over an existing dataset (wipes first)
+dotnet run --project PLCGateway.DemoSeeder -- seed --force
 
 # Purge everything and reset the aggregation state
 dotnet run --project PLCGateway.DemoSeeder -- wipe
@@ -87,8 +90,19 @@ dotnet run --project PLCGateway.DemoSeeder -- verify
 ## Running the dashboard against the seeded data
 
 ```bash
-dotnet run --project PLCGateway --environment Demo
+dotnet run --project PLCGateway -c Release --no-launch-profile -- --environment Demo --urls http://localhost:5210
 ```
+
+Then open <http://localhost:5210> and log in with `admin` / `admin123`.
+
+> ⚠️ **The `--` separator is mandatory.** Without it `dotnet run` swallows `--environment Demo`
+> instead of passing it to the app: `appsettings.Demo.json` is never loaded, so the app starts
+> against the **production** `sreesakthi_gateway` database with the PLC scan loop running. It fails
+> silently — the app starts and serves pages, just from the wrong data. `--no-launch-profile` is
+> needed too, because `launchSettings.json` otherwise forces `ASPNETCORE_ENVIRONMENT=Development`.
+>
+> The environment-variable form is equivalent, if you prefer it (PowerShell:
+> `$env:ASPNETCORE_ENVIRONMENT='Demo'` first).
 
 `appsettings.Demo.json` sets `Demo:Enabled = true`, which skips **only** the PLC scan loop and the
 startup gap handler. Without that, a failing PLC connection would mark every Tier 1 row stale,
@@ -144,12 +158,16 @@ recording** — so lifetime totals and the all-time graphs cover exactly this wi
 - 8–12 min blast, 2.5–4.3 min load/unload; 3 poor days with stretched changeovers
 - 4 fault events of 10–40 min — machine **powered but not blasting**, so they cost utility, which
 is what a real fault does
-- 4 % of cycles get a reblast: its own rising edge, energy spent, nothing declared, zero production
+- Reblasts are DISABLED (`ReblastProbability = 0`). The model still supports them — a reblast is a
+  real second pass with its own rising edge that spends energy and declares nothing — but in a demo
+  they made `cycle_count` disagree with the number of loads actually cast, so every reading of the
+  Blast Cycles tile needed a caveat. Raise the constant to model a plant that reblasts.
 - 4 casting parts — Brake Drum 120 kg, Pump Casing 180 kg, Gear Housing 260 kg, Flywheel 340 kg.
 30 % of days run a single part, so the item filter has clean days to show
 - Shot consumption ~4.2–6.0 kg per tonne cast; refills of 100–180 kg triggered when the hopper
 runs low, never on a schedule
-- Impeller current 20–35 A per impeller while blasting, near zero when idle, drifting up ~6 % over
+- Impeller current ramps from a true 0 A at blast start to a ~20 A plateau over 20 s, fluctuates in
+  a steady band for the rest of the blast, and returns to 0 A after it, drifting up ~6 % over
 each blade life and stepping down at replacement
 
 **Measured vs declared is deliberately not identical.** The `Tonnage` accumulator advances by the

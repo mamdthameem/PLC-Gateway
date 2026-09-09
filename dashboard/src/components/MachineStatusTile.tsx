@@ -39,7 +39,7 @@ export default function MachineStatusTile() {
     <Paper sx={{ p: 2.5, borderRadius: 2, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
       <Typography
         variant="caption"
-        sx={{ color: 'text.secondary', fontWeight: 600, letterSpacing: '0.07em', fontSize: '0.68rem', textTransform: 'uppercase' }}
+        sx={{ color: 'text.secondary', fontWeight: 600, letterSpacing: '0.07em', fontSize: '0.68rem' }}
       >
         Machine Status
       </Typography>
@@ -84,7 +84,7 @@ export default function MachineStatusTile() {
 
       {fetchFailed && (
         <Typography variant="caption" sx={{ color: 'error.main', fontSize: '0.62rem' }}>
-          Cannot reach the gateway API — value below may be out of date.
+          Cannot reach the gateway API. Value below may be out of date.
         </Typography>
       )}
 

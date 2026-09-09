@@ -1,10 +1,12 @@
-import { useState, useEffect } from 'react';
-import { Box, CircularProgress, Alert, Typography } from '@mui/material';
 import {
-  ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+  ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
 } from 'recharts';
-import { fetchTrends } from '../services/trendsService';
-import { pickBucket, formatBucketLabel } from '../utils/trendBuckets';
+import TrendChartFrame from './TrendChartFrame';
+import { useTrendSeries } from '../utils/useTrendSeries';
+import {
+  categoryXAxis, Y_AXIS, CHART_MARGIN, niceScaleOf,
+  xAxisTitle, yAxisTitle, BUCKET_ADJECTIVE,
+} from '../utils/chartAxis';
 
 interface Props {
   /** Omit both bounds for the all-time series (Section 1). */
@@ -12,87 +14,90 @@ interface Props {
   windowEnd?: string;
 }
 
-interface Row {
-  label: string;
-  producedKg: number;
-  tonnageEnd: number | null;
-}
+const BAR_COLOR  = '#2e7d32';
+const LINE_COLOR = '#1565c0';
 
+/**
+ * All-time production: bars are what was produced IN each bucket, the line is the PLC's running
+ * Tonnage accumulator AT the end of each bucket.
+ *
+ * Two series on two scales is the honest way to show this — a per-bucket quantity and a
+ * lifetime-to-date total cannot share an axis without one of them being unreadable. What was
+ * missing was any way to tell which axis belonged to which series, so each axis is now titled and
+ * drawn in its series' own colour, and the legend spells out both.
+ *
+ * (The bucket size itself is chosen server-side and every bucket in the range is present, so bars
+ * are directly comparable to each other. They previously were not: an all-time request always
+ * asked for months, so a part-month of recording became a bar covering 6 days sitting next to one
+ * covering 19.)
+ */
 export default function ProductionGraph({ windowStart, windowEnd }: Props) {
-  const [data, setData]       = useState<Row[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState<string | null>(null);
+  const state = useTrendSeries(windowStart, windowEnd);
+  const { points, bucket } = state;
 
-  useEffect(() => {
-    let active = true;
-    setLoading(true);
-    setError(null);
+  const left  = niceScaleOf(points, p => p.productionKg);
+  const right = niceScaleOf(points, p => p.tonnageEnd ?? 0);
 
-    const start = windowStart ? new Date(windowStart) : undefined;
-    const end   = windowEnd   ? new Date(windowEnd)   : undefined;
-    const bucket = pickBucket(start, end);
-
-    fetchTrends(bucket, start, end)
-      .then(rows => {
-        if (!active) return;
-        setData(rows.map(r => ({
-          label:      formatBucketLabel(r.day, bucket),
-          producedKg: r.productionKg,
-          tonnageEnd: r.tonnageEnd,
-        })));
-        setLoading(false);
-      })
-      .catch(e => {
-        if (!active) return;
-        setError((e as Error).message);
-        setLoading(false);
-      });
-
-    return () => { active = false; };
-  }, [windowStart, windowEnd]);
-
-  if (loading) return <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}><CircularProgress /></Box>;
-  if (error)   return <Alert severity="error">{error}</Alert>;
-  if (!data.length) return <Typography color="text.secondary">No production data recorded yet.</Typography>;
+  const kg = (v: number | undefined) =>
+    `${(v ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 })} kg`;
 
   return (
-    <Box sx={{ width: '100%', height: 320 }}>
-      <ResponsiveContainer>
-        {/* Bars = produced in each bucket; line = the PLC's running Tonnage accumulator, which is
-            what the Production tile itself shows. */}
-        <ComposedChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 32 }}>
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis
-            dataKey="label"
-            tick={{ fontSize: 10 }}
-            angle={-40}
-            textAnchor="end"
-            interval="preserveStartEnd"
-            minTickGap={12}
-          />
-          <YAxis yAxisId="left" unit=" kg" tick={{ fontSize: 11 }} />
-          <YAxis yAxisId="right" orientation="right" unit=" kg" tick={{ fontSize: 11 }} />
-          <Tooltip formatter={(v: number | undefined) => `${(v ?? 0).toLocaleString()} kg`} />
-          <Legend wrapperStyle={{ fontSize: 11 }} />
-          <Bar
-            yAxisId="left"
-            dataKey="producedKg"
-            name="Produced in period"
-            fill="#2e7d32"
-            radius={[2, 2, 0, 0]}
-          />
-          <Line
-            yAxisId="right"
-            type="monotone"
-            dataKey="tonnageEnd"
-            name="Tonnage (cumulative)"
-            stroke="#1565c0"
-            dot={false}
-            strokeWidth={2}
-            connectNulls
-          />
-        </ComposedChart>
-      </ResponsiveContainer>
-    </Box>
+    <TrendChartFrame state={state} emptyMessage="No production data recorded yet.">
+      <ComposedChart data={points} margin={{ ...CHART_MARGIN, right: 78 }}>
+        <CartesianGrid strokeDasharray="3 3" />
+        <XAxis
+          {...categoryXAxis(points.length)}
+          dataKey="label"
+          label={xAxisTitle('Date')}
+        />
+        <YAxis
+          {...Y_AXIS}
+          yAxisId="left"
+          domain={left.domain}
+          ticks={left.ticks}
+          stroke={BAR_COLOR}
+          tickFormatter={(v: number) => v.toLocaleString()}
+          label={yAxisTitle(`${BUCKET_ADJECTIVE[bucket]} Production (kg)`)}
+        />
+        <YAxis
+          {...Y_AXIS}
+          yAxisId="right"
+          orientation="right"
+          domain={right.domain}
+          ticks={right.ticks}
+          stroke={LINE_COLOR}
+          tickFormatter={(v: number) => v.toLocaleString()}
+          label={{
+            value: 'Cumulative Production (kg)',
+            angle: -90,
+            position: 'insideRight',
+            offset: 8,
+            style: { fontSize: 12, textAnchor: 'middle' as const },
+          }}
+        />
+        <Tooltip
+          formatter={(v: number | undefined, name) => [kg(v), name]}
+          labelFormatter={(_l, payload) => payload?.[0]?.payload?.full ?? ''}
+        />
+        <Legend wrapperStyle={{ fontSize: 12 }} verticalAlign="top" height={28} />
+        <Bar
+          yAxisId="left"
+          dataKey="productionKg"
+          name={`${BUCKET_ADJECTIVE[bucket]} Production`}
+          fill={BAR_COLOR}
+          radius={[2, 2, 0, 0]}
+        />
+        <Line
+          yAxisId="right"
+          type="monotone"
+          dataKey="tonnageEnd"
+          name="Cumulative Production"
+          stroke={LINE_COLOR}
+          dot={false}
+          strokeWidth={2}
+          connectNulls
+        />
+      </ComposedChart>
+    </TrendChartFrame>
   );
 }

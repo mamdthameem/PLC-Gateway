@@ -122,7 +122,24 @@ Industry project. A single **unified ASP.NET Core (.NET 10) application** hosted
 ### Section 1 — `plc_shots_breakdown` (table, upserted incrementally)
 
 For each pair of consecutive `Refil shots weight` COV events: count `Blast ON/OFF` rising edges between them.
-Output: `(refill_timestamp, blast_count)`. Maintained by the incremental engine via upsert (no TRUNCATE), so the dashboard never reads an empty/partial table. Shared dataset for parameters #7 and #8.
+Output: `(refill_timestamp, blast_count)`.
+
+> **The row is keyed by the refill that CLOSES the interval, not the one that opens it.**
+> `FoldRefillAsync` calls `InsertLifetimeShotsBreakdownAsync(ev.Timestamp, blastCount)` where
+> `blastCount` counts edges between `PrevRefillChangeTs` and `ev.Timestamp`. So a bar labelled
+> "8 Sept" holds the cycles run *since the previous refill on 3 Sept* — 4.7 days' worth. Two
+> consequences the dashboard got wrong until now: the label is the END of the window, and the
+> interval currently in progress has **no row at all** (no closing refill yet), so the last bar is
+> the last COMPLETED interval, never "the current one". Interval lengths are irregular by nature —
+> a refill fires when the hopper crosses its low mark — so this chart can never be read as one bar
+> per day. N refills produce N−1 rows.
+
+`GET /api/shotsbreakdown` returns `intervalStartTimestamp` alongside — the opening refill. For every
+row but the first that is simply the previous row, but the FIRST row's opener has no row of its own,
+so the API recovers it from the Tier 2 refill events. Without it the earliest bar was the only one
+that could not name its own window.
+
+Maintained by the incremental engine via upsert (no TRUNCATE), so the dashboard never reads an empty/partial table. Shared dataset for parameters #7 and #8.
 
 > **Section 1 is now incremental** (`plc_aggregation_state`): each pass folds only Tier 2 rows newer than the stored watermark into running accumulators, producing identical outputs to the old full-replay engine. Energy is a running sum of the per-cycle `plc_cycles.energy_kwh`. Run with `--rebuild-aggregation` to replay from scratch.
 
@@ -159,7 +176,7 @@ Output: `(refill_timestamp, blast_count)`. Maintained by the incremental engine 
 
 | What                    | Source               | Query pattern                                                                 |
 | ----------------------- | -------------------- | ----------------------------------------------------------------------------- |
-| Amps per impeller (×10) | `plc_current_values` | `WHERE parameter_name = 'Current_imp_N'`                                      |
+| Amps per impeller (×10) | `plc_current_values` | `WHERE parameter_name = 'Current_imp_N'`, ordered by `substring(parameter_name from '[0-9]+$')::int` — a plain `ORDER BY parameter_name` is a TEXT sort, which puts `Current_imp_10` directly after `Current_imp_1`. Both amps panels lay the ten tiles out five to a row (CSS grid; MUI's 12 columns cannot divide into fifths) |
 | Spare health (140 rows) | `plc_spare_status`   | All rows, or `WHERE trigger_active = TRUE AND threshold_hours > 0` for alerts |
 
 
@@ -191,21 +208,35 @@ state), so it is filtered out of the grid itself.
 | `machine_utility_pct` | All-time utility, `/api/trends` (month buckets) | Time filter only — hourly/daily buckets for the window. **Not offered for cycle/item filters**, and its toggle is disabled entirely under an item filter (those set `filter_start`/`filter_end` to `NOW()` placeholders, so there is no meaningful time axis) |
 | `production_qty_kg` | All-time production: bars = produced per bucket, line = cumulative `Tonnage` | **Bar chart of declared weight per casting item** (`ItemProductionGraph`, from `plc_filtered_metal_production`). The scalar is the total of those bars — a different formula from Section 1's, by design |
 | `energy_kwh_total` | All-time energy per bucket, `/api/trends` | Per-cycle bars (`plc_filtered_cycle_data`) |
-| `energy_per_casting_kwh_kg` | All-time kWh/kg per bucket | Per-cycle line |
-| `blast_time_sec` | n/a — no rollup column, scalar only | **n/a — scalar only.** Section 2 could plot it per cycle, but the asymmetry with Section 1 was more confusing than the chart was useful. Per-cycle detail is in the Cycle Breakdown table |
-| `cycle_count` | n/a — no rollup column, scalar only | **n/a — scalar only**, same reason as `blast_time_sec`. The cycles themselves are listed in the Cycle Breakdown table |
-| Amps tile (×10) | Per-impeller trace for the last completed cycle | Same tile/dialog layout, driven by the FilterBar (all three modes, incl. custom range): tile shows a duration-weighted average current for the filter's cycles (`plc_filtered_amps_data`), dialog chart is one point per cycle (`AVG(value_num)` in that cycle's blast window) instead of raw per-second samples |
-| "Blast Cycles per Refill Interval" | Bar chart of `plc_shots_breakdown` — one bar per refill, height = blast cycles until the next refill | **n/a — removed from Section 2.** A refill interval spans whatever cycles fall in it, mixing items, so no filter scopes it meaningfully. Section 1 only, above the filter bar |
+| `energy_per_casting_kwh_kg` | **n/a — scalar only** | **n/a — scalar only.** kWh/kg drifts by thousandths across a bucket, so any axis fitted to it turns rounding into an apparent trend |
+| `blast_time_sec` | Blast hours per bucket, `/api/trends` (`blast_on_sec`) | Same chart over the filter window (time filter only) |
+| `cycle_count` | Completed cycles per bucket, `/api/trends` (`cycle_count`) | Same chart over the filter window (time filter only) |
+| Amps tile (×10) | **Every recorded cycle, one point each** — that cycle's average current (`GET /api/amps/by-cycle`); 1 463 cycles in ~130 ms / 109 KB. The x-axis is CYCLE NUMBER, not time, so the trace does not return to zero between points and must not: nothing exists "between" cycle 960 and 961 to plot. The rise across the series is the blade-wear model. A per-sample view on 5/25/100-cycle ranges was built alongside this and **removed as redundant**; restoring it needs a time axis over a bounded window, since per-second detail across all cycles is ~178 000 samples per impeller. The tile headline is the live Tier 1 reading while the impeller turns, and the **last completed cycle's average** (`GET /api/amps/last-cycle`) while it does not, with the live 0 A kept underneath | Same tile/dialog layout, driven by the FilterBar (all three modes, incl. custom range): tile shows a duration-weighted average current for the filter's cycles (`plc_filtered_amps_data`), dialog chart is one point per cycle (`AVG(value_num)` in that cycle's blast window) instead of raw per-second samples. **All cycles are plotted** — the old 200-cycle cap silently dropped ~1 250 of 1 448 while the tile beside it averaged every one |
+| "Blast Cycles per Refill Interval" | Bar chart of `plc_shots_breakdown` — one bar per refill, height = blast cycles until the next refill. Labels are **date only**; a clock time is added only to bars that share a date with another | **n/a — removed from Section 2.** A refill interval spans whatever cycles fall in it, mixing items, so no filter scopes it meaningfully. Section 1 only, above the filter bar |
 
 `effective_shots_usage_kg_per_ton` has no graph in either section — no `plc_daily_trends` rollup
-column backs it, and it is Section 1 only.
+column backs it, and it is Section 1 only. `energy_per_casting_kwh_kg` has no graph either, for a
+different reason: the column exists, the series is just too flat to plot honestly.
 
 **All graph math is server-side.** The dashboard plots `/api/trends` values verbatim — the same
 rule the cloud mirror follows. The old browser-side `utilityCompute.ts` was deleted with the
 rollup; there is no longer a second implementation to drift.
 
-Bucket granularity is chosen by window span (`dashboard/src/utils/trendBuckets.ts`): no bounds ⇒
-`month` (all-time), ≤2 days ⇒ `hour`, ≤180 days ⇒ `day`, else `month`.
+**Bucket granularity is chosen SERVER-SIDE** (`bucket=auto`, the default): ≤2 days of requested
+window ⇒ `hour`; otherwise from the span of history that actually exists — ≤400 days ⇒ `day`, else
+`month`. The resolved choice comes back in the `X-Trend-Bucket` response header so the dashboard
+can title its axis without re-deriving it. `dashboard/src/utils/trendBuckets.ts` now only formats
+labels.
+
+> The browser used to choose, and it read "no bounds" as "all-time, so months" — which turned a
+> plant with 29 days of history into **two** bars, one covering 19 days and one covering 6. Only
+> the server knows how much history exists, so only the server can make this call.
+
+**Every trend series is gap-filled.** A day the plant did not run has no `plc_daily_trends` row;
+the API emits a zero bucket for it anyway. Without that, a chart drew 25 evenly-spaced points for a
+29-day span and put a Saturday flush against a Monday — equal spacing that did not mean equal time.
+Charts rely on this: they use category axes with strided ticks, which are only honest on a dense
+series.
 
 > `machine_utility_pct` scalar vs graph: the **scalar** clamps its denominator to start at the
 > first-ever blast (avoiding a meaningless lifetime ratio), while each **graph bucket** is a plain
@@ -327,8 +358,12 @@ Thresholds (spare_index 0–13, hours): 100, 300, 300, 600, 2000, 2000, 300, 200
 | `PLCGateway/CovDetectionService.cs`        | COV logic (relative/absolute deadband, state-change)                     |
 | `PLCGateway/Models/*.cs`                   | `PlcCycle`, `CalculationRequest`, `AggregationState`, `ScanWrites`, …     |
 | `PLCGateway/Api/Controllers/*.cs`          | Dashboard API + `AuthController` (JWT) + `AdminController` (cloud pulls: `live`, `trends`, `filter`, `history`) + `TrendsController` (local dashboard's graph series, JWT-protected) |
-| `PLCGateway/Api/Services/*.cs`             | API data services (typed reads), `TrendsService` (all graph math), `UserService`, `LicenseState` |
-| `dashboard/src/utils/trendBuckets.ts`      | Graph bucket granularity selection (hour/day/month)                       |
+| `PLCGateway/Api/Services/*.cs`             | API data services (typed reads), `TrendsService` (all graph math, `bucket=auto`, gap-fill), `UserService`, `LicenseState` |
+| `dashboard/src/utils/trendBuckets.ts`      | Axis + tooltip label formatting per bucket (selection moved server-side)  |
+| `dashboard/src/utils/chartAxis.ts`         | Shared axis construction — strided ticks, rounded y-domains, axis titles  |
+| `dashboard/src/utils/useTrendSeries.ts`    | One fetch + labelling path for every trend chart                          |
+| `dashboard/src/components/TrendChartFrame.tsx` | Loading/error/empty + the "one point per day" interval caption        |
+| `dashboard/src/components/TrendMetricGraph.tsx` | Energy / blast-time / cycle-count bars from the rollup (all one component) |
 | `dashboard/src/utils/exportFilteredExcel.ts` | Section 2 → 3-sheet .xlsx export (Parameters / Item Production / Cycles). Reads the FETCHED dataset, never a rendered table — which is why removing the tables left it working. Write-only; never parses a workbook |
 | `dashboard/src/components/ItemProductionGraph.tsx` | Section 2 production tile's graph — declared weight per casting item (replaced the per-metal table) |
 | `dashboard/src/components/FilterBar.tsx`    | Filter mode tabs + per-parameter toggles (Select All / Clear All); stays usable while a filter is applied |
@@ -347,11 +382,12 @@ Thresholds (spare_index 0–13, hours): 100, 300, 300, 600, 2000, 2000, 300, 200
 
 ## Latest revision — six changes (see README for the full reference)
 
-1. **Layout split by whether a parameter has a filtered equivalent.** Above the filter bar: the
-   Section 1-ONLY parameters (`machine_status`, `avg_shot_refill_time_sec`,
-   `last_refill_epoch_sec`, `effective_shots_usage_kg_per_ton`, shots-per-refill chart, spare
-   health) — none of them is repeated below. Below the filter bar: the parameters that exist in
-   BOTH sections (`machine_utility_pct`, `production_qty_kg`, `energy_kwh_total`,
+1. **Layout: the complete Section 1 above the filter, Section 2 below it.** *(Superseded — see
+   "Layout, current" below. Kept because the key lists it names are still the ones in the code.)*
+   Above the filter bar: the Section 1-ONLY parameters (`machine_status`,
+   `avg_shot_refill_time_sec`, `last_refill_epoch_sec`, `effective_shots_usage_kg_per_ton`,
+   shots-per-refill chart, spare health). Below the filter bar: the parameters that exist in BOTH
+   sections (`machine_utility_pct`, `production_qty_kg`, `energy_kwh_total`,
    `energy_per_casting_kwh_kg`, `blast_time_sec`, `cycle_count`, impeller current), showing their
    Section 1 real-time values until a filter is applied and their Section 2 values after.
    Key lists: `SECTION1_ONLY_PARAM_KEYS` / `SHARED_PARAM_KEYS`; `LifetimeSection` is rendered twice.
@@ -386,6 +422,78 @@ does not respond to a filter. `plc_filtered_shots_breakdown` is left in place, u
 
 **Two cloud-contract breaks** (documented in `CONTRACT-admin-api.md`): the renamed lifetime key and
 the removed `section2.shotsBreakdown`.
+
+---
+
+## Layout, current
+
+Three blocks, top to bottom:
+
+| Block | Contents |
+| ----- | -------- |
+| **Above the filter** | The COMPLETE Section 1 picture: `MachineStatusTile`, then **every** Section 1 parameter (`ALL_SECTION1_PARAM_KEYS` = `SECTION1_ONLY_PARAM_KEYS` + `SHARED_PARAM_KEYS`), the shots-per-refill chart, live `AmpsPanel`, and `SpareHealthTable`. All-time, never responds to the filter. |
+| **The filter bar** | Unchanged. |
+| **Below the filter** | The shared parameters again — Section 1 values until Apply is pressed, Section 2 values after. |
+
+The shared parameters therefore appear **twice** while no filter is applied. That repetition is
+deliberate and was requested: the upper block is a fixed all-time reference that never moves, so a
+filtered figure below can be compared against its all-time counterpart without clearing the filter.
+Revision #1 above removed exactly this duplication; it is back by request. Do not "fix" it.
+
+---
+
+## Graph rules (apply to every chart)
+
+These exist because the charts were reviewed and found unreadable. Breaking any one of them
+reintroduces a specific defect that was reported:
+
+| Rule | Why |
+| ---- | --- |
+| **Equal spacing must mean equal interval.** Category axes are permitted only on a gap-filled series. | 4 missing Sundays were drawn as 25 evenly-spaced points across a 29-day span. |
+| **Ticks are strided** (`tickInterval()`), never `interval="preserveStartEnd"`. | preserveStartEnd thins by whatever fits, so the gap between printed ticks varies along the axis. |
+| **Numeric axes use `type="number"` + `numericTicks()`**, never `interval` striding. | `interval` strides by row INDEX, so a cycle axis running 1…1463 printed 1, 106, 211, 316. Positional ticks land on 100, 200, 300 — numbers a reader can actually look up. |
+| **Label EVERY point when the labels fit.** Tilted date axes use `categoryXAxis(count)` (target 31 — a full month of days); horizontal numeric axes pass `tickInterval(n, 14)`, since unrotated text needs its full width. | A chart captioned "one point per day" that labels every third day makes the reader count gridlines to find a date. Striding only begins past what physically fits. |
+| **Both axes carry a title** naming the unit or the interval (`xAxisTitle` / `yAxisTitle`). | Most charts had no axis titles at all. |
+| **Y domains start at 0 and use rounded steps** (`niceScale()`). | Auto domains put gridlines on numbers like 4 731.6 and magnified flat series into apparent trends. |
+| **Plot every point in scope — never truncate.** | `.slice(-200)` dropped ~1 250 of 1 448 cycles while the tile beside it totalled all of them. |
+| **No reference line without a legend entry.** | A hard-coded dashed 80 % target on the utility chart read as an unexplained second data series above the real one. |
+| **Charts open at `maxWidth="lg"` and `CHART_HEIGHT`.** | A dense series in a 600 px dialog forced labels to be thinned to nothing. |
+
+Shared helpers live in `dashboard/src/utils/chartAxis.ts`; every trend chart fetches through
+`useTrendSeries` and renders inside `TrendChartFrame`, so granularity, labelling and empty-state
+wording cannot drift between charts.
+
+---
+
+## Impeller currents are heartbeat tags
+
+`appsettings.json` lists `Current_imp_1…10` in `HeartbeatTags`, so a live gateway writes a row per
+impeller every 60 s **even at 0 A between loads**. `RawSeeder.HeartbeatTags()` originally omitted
+them, which left a 3–4 minute changeover carrying only two rows — the zero at blast end and the
+zero at the next blast start. The amps trace crossed the whole gap on one straight segment, so a
+tooltip anywhere along it reported the same timestamp. They are now emitted.
+
+Blast periods are unaffected: the 5 s samples are denser than the heartbeat, and the emitter skips
+any beat within `PeriodicHeartbeatSeconds` of an existing row. Per-cycle energy is unchanged
+(`energy_per_casting_kwh_kg` stayed at 0.1399) because the idle rows fall outside every
+`[blast_start, blast_end]` window.
+
+---
+
+## Demo dataset: why it ends with the machine OFF
+
+`PLCGateway.DemoSeeder` stops at a completed shift boundary, so the live tiles show a stopped
+machine and 0 A. Ending the window **mid-blast** to make the dashboard look live was built and
+**reverted** — do not rebuild it:
+
+`CalculationService` measures an unfinished blast as `DateTime.Now − segmentStart` (line ~89), and
+`AggregationService` keeps running in demo mode (only `GatewayWorker` is skipped). A frozen dataset
+with an open blast therefore gains an hour of `blast_time_sec` every hour, so `machine_utility_pct`
+drifts upward for as long as the demo sits unopened. A demo shown the morning after seeding would
+have reported a machine that had been blasting all night.
+
+The tiles solve the presentation problem instead: they headline the last completed cycle's average
+current while the machine is idle, labelled as such. Honest data, informative tile.
 
 ---
 

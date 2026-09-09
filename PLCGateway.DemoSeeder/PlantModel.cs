@@ -172,6 +172,7 @@ public static class PlantModel
                 block.MachineOff = block.Cycles[^1].BlastEnd
                     .AddMinutes(Lerp(rng, DemoProfile.CoolDownMinutesMin, DemoProfile.CoolDownMinutesMax));
                 if (block.MachineOff > shiftClose) block.MachineOff = shiftClose;
+
                 schedule.Shifts.Add(block);
             }
         }

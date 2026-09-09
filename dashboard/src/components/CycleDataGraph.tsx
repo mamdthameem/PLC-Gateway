@@ -1,33 +1,45 @@
 import { useState, useEffect } from 'react';
 import { Box, CircularProgress, Alert, Typography } from '@mui/material';
 import {
-  BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer,
+  ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts';
 import { fetchFilterCycles } from '../services/filterService';
+import {
+  Y_AXIS, CHART_MARGIN, CHART_HEIGHT, numericTicks, niceScaleOf, xAxisTitle, yAxisTitle,
+} from '../utils/chartAxis';
 import type { FilteredCycle } from '../types';
 
 interface Props {
-  mode: 'energy' | 'efficiency';
   /**
    * Section 2 only — the completed filter request whose cycles are charted. Section 1 uses
-   * EnergyTrendGraph instead: it reads the daily rollup rather than submitting a filter request,
-   * so opening a Section 1 graph no longer writes a row to calculation_requests.
+   * TrendMetricGraph instead: it reads the daily rollup rather than submitting a filter request,
+   * so opening a Section 1 graph never writes a row to calculation_requests.
    */
   requestId: number;
 }
 
 type State = 'loading' | 'done' | 'error';
 
+/** Above this many cycles, bars are narrower than a pixel — a line reads the shape better. */
+const LINE_THRESHOLD = 120;
+
 /**
- * Per-cycle energy / efficiency within one filtered window.
+ * Energy consumed per blast cycle within one filtered window.
  *
- * The blast-time and cumulative-cycle-count modes were removed: those two tiles are scalar-only in
- * both sections now, because Section 1 has no plc_daily_trends column to plot them from and the
- * section-to-section asymmetry was more confusing than the charts were worth. Their per-cycle
- * detail is still on screen in Section 2's Cycle Breakdown table.
+ * EVERY cycle in the filter is plotted. This used to slice to the most recent 200, which on a
+ * month filter silently discarded ~1 250 of 1 448 cycles while the tile above it totalled all of
+ * them — the chart and the scalar were describing different sets of cycles, with only a caption to
+ * say so.
+ *
+ * The x-axis is the cycle number, which is a uniform interval by construction: one unit is one
+ * cycle, so no cycle is spaced differently from any other. Ticks are strided so the printed
+ * numbers sit at a constant distance.
+ *
+ * Efficiency (kWh/kg) is no longer charted here. Per-cycle efficiency varies by a few thousandths
+ * across a filter, so the line was noise magnified by an auto-fitted axis; the tile carries the
+ * figure and the Cycle Breakdown table carries the per-cycle detail.
  */
-export default function CycleDataGraph({ mode, requestId }: Props) {
+export default function CycleDataGraph({ requestId }: Props) {
   const [cycles, setCycles] = useState<FilteredCycle[]>([]);
   const [state, setState]   = useState<State>('loading');
   const [error, setError]   = useState<string | null>(null);
@@ -52,58 +64,80 @@ export default function CycleDataGraph({ mode, requestId }: Props) {
     return () => { active = false; };
   }, [requestId]);
 
-  if (state === 'loading') return <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}><CircularProgress /></Box>;
-  if (state === 'error')   return <Alert severity="error">{error}</Alert>;
-  if (!cycles.length)      return <Typography color="text.secondary">No cycle data in this filter.</Typography>;
-
-  // Keep the chart readable when a filter spans a very large number of cycles.
-  const visible = cycles.slice(-200);
-  const truncated = cycles.length > visible.length;
-
-  const note = truncated ? (
-    <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>
-      Showing the most recent {visible.length} of {cycles.length} cycles — narrow the filter to see
-      earlier ones.
-    </Typography>
-  ) : null;
-
-  if (mode === 'energy') {
-    const chartData = visible.map(c => ({ cycle: c.cycleNumber, kWh: parseFloat(c.energyKwh.toFixed(3)) }));
+  if (state === 'loading') {
     return (
-      <Box sx={{ width: '100%' }}>
-        {note}
-        <Box sx={{ width: '100%', height: 320 }}>
-          <ResponsiveContainer>
-            <BarChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="cycle" tick={{ fontSize: 10 }} label={{ value: 'Cycle #', position: 'insideBottom', offset: -4 }} />
-              <YAxis unit=" kWh" tick={{ fontSize: 11 }} />
-              <Tooltip formatter={(v: number | undefined) => [`${(v ?? 0).toFixed(3)} kWh`, 'Energy']} />
-              <Bar dataKey="kWh" fill="#1565c0" radius={[2, 2, 0, 0]} name="Energy (kWh)" />
-            </BarChart>
-          </ResponsiveContainer>
-        </Box>
+      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: CHART_HEIGHT }}>
+        <CircularProgress />
       </Box>
     );
   }
+  if (state === 'error') return <Alert severity="error">{error}</Alert>;
+  if (!cycles.length)    return <Typography color="text.secondary">No cycle data in this filter.</Typography>;
 
-  // efficiency
-  const chartData = visible.map(c => ({
+  const data = cycles.map(c => ({
     cycle: c.cycleNumber,
-    kwPerKg: c.productionKg > 0 ? parseFloat((c.energyKwh / c.productionKg).toFixed(4)) : 0,
+    kWh:   Number(c.energyKwh.toFixed(3)),
+    start: new Date(c.blastStart).toLocaleString(),
   }));
+
+  const y = niceScaleOf(data, d => d.kWh);
+  const asLine = data.length > LINE_THRESHOLD;
+
   return (
-    <Box sx={{ width: '100%' }}>
-      {note}
-      <Box sx={{ width: '100%', height: 320 }}>
+    <Box>
+      <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
+        One point per blast cycle. All {data.length.toLocaleString()} cycles in this filter are
+        plotted, cycles {data[0].cycle.toLocaleString()} to {data[data.length - 1].cycle.toLocaleString()}.
+      </Typography>
+
+      <Box sx={{ width: '100%', height: CHART_HEIGHT }}>
         <ResponsiveContainer>
-          <LineChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+          <ComposedChart data={data} margin={CHART_MARGIN}>
             <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="cycle" tick={{ fontSize: 10 }} label={{ value: 'Cycle #', position: 'insideBottom', offset: -4 }} />
-            <YAxis unit=" kWh/kg" tick={{ fontSize: 11 }} />
-            <Tooltip formatter={(v: number | undefined) => [`${(v ?? 0).toFixed(4)} kWh/kg`, 'Efficiency']} />
-            <Line type="monotone" dataKey="kwPerKg" stroke="#e65100" dot={false} strokeWidth={2} name="kWh/kg" />
-          </LineChart>
+            {/* type="number" keeps ticks POSITIONAL, so they land on round cycle numbers.
+                A category axis strides by row index and prints whatever cycle sits there. */}
+            <XAxis
+              dataKey="cycle"
+              type="number"
+              domain={[data[0].cycle, data[data.length - 1].cycle]}
+              ticks={numericTicks(data[0].cycle, data[data.length - 1].cycle)}
+              tick={{ fontSize: 11 }}
+              height={52}
+              tickMargin={6}
+              tickFormatter={(v: number) => v.toLocaleString()}
+              label={xAxisTitle('Cycle number')}
+            />
+            <YAxis
+              {...Y_AXIS}
+              domain={y.domain}
+              ticks={y.ticks}
+              tickFormatter={(v: number) => v.toLocaleString()}
+              label={yAxisTitle('Energy (kWh)')}
+            />
+            <Tooltip
+              formatter={(v: number | undefined) => [`${(v ?? 0).toFixed(3)} kWh`, 'Energy']}
+              labelFormatter={(label, payload) =>
+                `Cycle ${label}, ${payload?.[0]?.payload?.start ?? ''}`}
+            />
+            <Legend wrapperStyle={{ fontSize: 12 }} verticalAlign="top" height={28} />
+            {asLine ? (
+              <Line
+                type="monotone"
+                dataKey="kWh"
+                name="Energy per cycle (kWh)"
+                stroke="#1565c0"
+                dot={false}
+                strokeWidth={1.5}
+              />
+            ) : (
+              <Bar
+                dataKey="kWh"
+                name="Energy per cycle (kWh)"
+                fill="#1565c0"
+                radius={[2, 2, 0, 0]}
+              />
+            )}
+          </ComposedChart>
         </ResponsiveContainer>
       </Box>
     </Box>

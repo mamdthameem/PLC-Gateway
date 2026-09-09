@@ -182,11 +182,18 @@ public sealed class RawSeeder
             double target = _ampBase[imp] * wear * loadFactor;
             double phase = _rng.NextDouble() * Math.PI * 2;
 
+            // The blast opens with an explicit zero at t=0: the impellers are stationary at the
+            // instant the blast turns on, and without this sample the trace began mid-ramp at
+            // ~7 A, so the chart never showed the spin-up it exists to show.
+            Emit(_tags[$"Current_imp_{imp}"], Real(0), cycle.BlastStart, "BLAST_ON");
+
             for (double s = _ampIntervalSeconds; s <= cycle.DurationSeconds; s += _ampIntervalSeconds)
             {
-                // Startup ramp, a slow wander so no two cycles trace the same line, and noise.
+                // Linear ramp from a standstill, a slow wander so no two cycles trace the same
+                // line, and noise. The ramp starts at 0 rather than 18 % of running current —
+                // a motor at rest draws no current.
                 double ramp = s < DemoProfile.AmpsStartupSeconds
-                    ? 0.18 + 0.82 * (s / DemoProfile.AmpsStartupSeconds)
+                    ? s / DemoProfile.AmpsStartupSeconds
                     : 1.0;
                 double wander = 1.0 + 0.02 * Math.Sin(phase + s / 95.0);
                 double noise = (_rng.NextDouble() * 2 - 1) * DemoProfile.AmpsNoise;
@@ -196,10 +203,10 @@ public sealed class RawSeeder
                      cycle.BlastStart.AddSeconds(s), "BLAST_ON");
             }
 
-            // Back to idle after the blast stops. Placed AFTER blast_end so it never lands inside
-            // the cycle window and drags the per-cycle average down.
+            // Back to a true zero after the blast stops. Placed AFTER blast_end so it never lands
+            // inside the cycle window and drags the per-cycle average down.
             EmitChange($"Current_imp_{imp}",
-                       Real(DemoProfile.AmpsIdle + _rng.NextDouble() * 0.15),
+                       Real(DemoProfile.AmpsIdle),
                        cycle.BlastEnd.AddSeconds(3));
         }
     }
@@ -320,6 +327,16 @@ public sealed class RawSeeder
         yield return "Machine status";
         yield return "Blast ON/OFF";
         yield return "Tonnage";
+
+        // Impeller currents ARE heartbeat tags on a real gateway (appsettings.json HeartbeatTags),
+        // so it writes a row per impeller every 60 s even while they sit at 0 A between loads.
+        // Leaving them out here meant a 3-4 minute changeover carried just TWO rows — the zero at
+        // blast end and the zero at the next blast start — so the amps trace crossed the gap on a
+        // single straight segment and a tooltip anywhere along it reported the same timestamp.
+        // The blast periods are unaffected: the 5 s samples are denser than the heartbeat, and the
+        // emitter skips any beat within PeriodicHeartbeatSeconds of an existing row.
+        for (int imp = 1; imp <= DemoProfile.ImpellerCount; imp++)
+            yield return $"Current_imp_{imp}";
 
         // 'Refil shots weight' is heartbeat-excluded by default. last_refill_epoch_sec is folded
         // from the NEWEST row of this tag regardless of storage reason, so a 60 s heartbeat would

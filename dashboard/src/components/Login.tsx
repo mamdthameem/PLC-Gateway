@@ -154,10 +154,11 @@ export const Login: React.FC = () => {
             <Box
               component="img"
               src={`${import.meta.env.BASE_URL}Untitled_design-removebg-preview.png`}
-              alt="Sense Shot"
+              alt="Shot Sense"
               sx={{
-                width: { xs: 52, md: 68 },
-                height: { xs: 48, md: 64 },
+                // 398x209 source — box holds that ratio so `contain` letterboxes nothing.
+                width: { xs: 132, md: 176, lg: 208 },
+                height: { xs: 69, md: 92, lg: 109 },
                 objectFit: 'contain',
                 mb: 3,
                 filter: 'brightness(1.1)',
@@ -181,7 +182,7 @@ export const Login: React.FC = () => {
                 mb: 1.5,
               }}
             >
-              SENSE SHOT
+              SHOT SENSE
             </Typography>
           </motion.div>
 
@@ -300,8 +301,8 @@ export const Login: React.FC = () => {
             <Box
               component="img"
               src={`${import.meta.env.BASE_URL}Untitled_design-removebg-preview.png`}
-              alt="Sense Shot"
-              sx={{ width: 34, height: 32, objectFit: 'contain' }}
+              alt="Shot Sense"
+              sx={{ width: 62, height: 32, objectFit: 'contain' }}
             />
             <Typography
               sx={{
@@ -311,7 +312,7 @@ export const Login: React.FC = () => {
                 color: '#fff',
               }}
             >
-              SENSE SHOT
+              SHOT SENSE
             </Typography>
           </Box>
 
@@ -470,7 +471,7 @@ export const Login: React.FC = () => {
               letterSpacing: '0.04em',
             }}
           >
-            © {new Date().getFullYear()} Sense Shot Technologies
+            © {new Date().getFullYear()} Shot Sense Technologies
           </Typography>
         </motion.div>
       </Box>

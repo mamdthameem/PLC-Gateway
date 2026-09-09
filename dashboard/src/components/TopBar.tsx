@@ -1,9 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
     Box,
     Typography,
-    TextField,
-    InputAdornment,
     IconButton,
     Tooltip,
     Menu,
@@ -12,14 +10,12 @@ import {
     ListItemIcon,
     ListItemText,
 } from '@mui/material';
-import SearchIcon from '@mui/icons-material/Search';
-import ClearIcon from '@mui/icons-material/Clear';
 import MenuIcon from '@mui/icons-material/Menu';
 import NotificationsNoneIcon from '@mui/icons-material/NotificationsNone';
 import NotificationsIcon from '@mui/icons-material/Notifications';
+import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
-import KeyboardCommandKeyIcon from '@mui/icons-material/KeyboardCommandKey';
 import { useLocation } from 'react-router-dom';
 import { useUI } from '../contexts/UIContext';
 import { useTheme } from '../contexts/ThemeContext';
@@ -28,15 +24,10 @@ import BB8Toggle from './ui/star-wars-toggle-switch';
 
 export const TopBar: React.FC = () => {
     const location = useLocation();
-    const { searchTerm, setSearchTerm, sidebarOpen, toggleSidebar } = useUI();
+    const { sidebarOpen, toggleSidebar } = useUI();
     const { mode, toggleTheme } = useTheme();
     const { notifications, unreadCount } = useNotifications();
     const [notificationAnchor, setNotificationAnchor] = useState<null | HTMLElement>(null);
-
-    // Reset search term when navigating between pages
-    useEffect(() => {
-        setSearchTerm('');
-    }, [location.pathname, setSearchTerm]);
 
     const getTitle = () => {
         const path = location.pathname;
@@ -91,116 +82,7 @@ export const TopBar: React.FC = () => {
                 </Typography>
             </Box>
 
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                {/* Search */}
-                <TextField
-                    size="small"
-                    placeholder="Search anything..."
-                    variant="outlined"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    InputProps={{
-                        startAdornment: (
-                            <InputAdornment position="start">
-                                <SearchIcon
-                                    sx={{
-                                        color: (theme) => theme.palette.mode === 'dark'
-                                            ? 'rgba(255,255,255,0.3)'
-                                            : 'rgba(0,0,0,0.4)',
-                                        fontSize: 20
-                                    }}
-                                />
-                            </InputAdornment>
-                        ),
-                        endAdornment: (
-                            <InputAdornment position="end">
-                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                    {searchTerm && (
-                                        <IconButton
-                                            size="small"
-                                            onClick={() => setSearchTerm('')}
-                                            sx={{
-                                                color: (theme) => theme.palette.text.secondary,
-                                                '&:hover': {
-                                                    color: (theme) => theme.palette.text.primary,
-                                                    backgroundColor: (theme) => theme.palette.mode === 'dark'
-                                                        ? 'rgba(255,255,255,0.08)'
-                                                        : 'rgba(0,0,0,0.08)',
-                                                },
-                                                transition: 'all 0.2s ease',
-                                            }}
-                                        >
-                                            <ClearIcon fontSize="small" />
-                                        </IconButton>
-                                    )}
-                                    <Box
-                                        sx={{
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            gap: 0.5,
-                                            backgroundColor: (theme) => theme.palette.mode === 'dark'
-                                                ? 'rgba(255,255,255,0.05)'
-                                                : 'rgba(0,0,0,0.05)',
-                                            px: 0.8,
-                                            py: 0.2,
-                                            borderRadius: 1,
-                                            border: (theme) => `1px solid ${theme.palette.divider}`,
-                                            transition: 'background-color 0.3s ease, border-color 0.3s ease',
-                                        }}
-                                    >
-                                        <KeyboardCommandKeyIcon
-                                            sx={{
-                                                fontSize: 12,
-                                                color: (theme) => theme.palette.text.secondary
-                                            }}
-                                        />
-                                        <Typography
-                                            sx={{
-                                                fontSize: 10,
-                                                color: (theme) => theme.palette.text.secondary,
-                                                fontWeight: 700
-                                            }}
-                                        >
-                                            K
-                                        </Typography>
-                                    </Box>
-                                </Box>
-                            </InputAdornment>
-                        ),
-                    }}
-                    sx={{
-                        width: 320,
-                        '& .MuiOutlinedInput-root': {
-                            backgroundColor: (theme) => theme.palette.mode === 'dark'
-                                ? 'rgba(255,255,255,0.03)'
-                                : 'rgba(0,0,0,0.02)',
-                            borderRadius: 2,
-                            transition: 'background-color 0.3s ease, border-color 0.3s ease',
-                            '& fieldset': {
-                                borderColor: (theme) => theme.palette.mode === 'dark'
-                                    ? 'transparent'
-                                    : 'rgba(0,0,0,0.12)',
-                                transition: 'border-color 0.3s ease',
-                            },
-                            '&:hover fieldset': {
-                                borderColor: (theme) => theme.palette.divider
-                            },
-                            '&.Mui-focused fieldset': {
-                                borderColor: (theme) => theme.palette.primary.main
-                            },
-                        },
-                        '& .MuiInputBase-input': {
-                            color: (theme) => theme.palette.text.primary,
-                            transition: 'color 0.3s ease',
-                            '&::placeholder': {
-                                color: (theme) => theme.palette.text.secondary,
-                                opacity: 1,
-                            },
-                        },
-                    }}
-                />
-
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
                     {/* BB8 Theme Toggle — unchecked = dark (night), checked = light (day) */}
                     {/* bb8-theme-toggle class exempts this node from the theme-switching CSS override */}
                     <Tooltip title={mode === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}>
@@ -212,7 +94,7 @@ export const TopBar: React.FC = () => {
                         </Box>
                     </Tooltip>
 
-                    <Tooltip title={unreadCount > 0 ? `${unreadCount} notification(s)` : 'Notifications'}>
+                    <Tooltip title={unreadCount > 0 ? `${unreadCount} spare${unreadCount === 1 ? '' : 's'} overdue for replacement` : 'Notifications'}>
                         <IconButton
                             onClick={(e) => setNotificationAnchor(e.currentTarget)}
                             sx={{
@@ -226,7 +108,7 @@ export const TopBar: React.FC = () => {
                                 transition: 'background-color 0.3s ease, color 0.3s ease',
                             }}
                         >
-                            <Badge badgeContent={unreadCount} color="warning" max={99}>
+                            <Badge badgeContent={unreadCount} color="error" max={99}>
                                 {unreadCount > 0 ? <NotificationsIcon /> : <NotificationsNoneIcon />}
                             </Badge>
                         </IconButton>
@@ -259,7 +141,7 @@ export const TopBar: React.FC = () => {
                     >
                         {notifications.length === 0 ? (
                             <MenuItem disabled sx={{ cursor: 'default' }}>
-                                <ListItemText primary="No notifications" secondary="You're all set." />
+                                <ListItemText primary="No notifications" secondary="No spare is overdue for replacement." />
                             </MenuItem>
                         ) : (
                             notifications.map((n) => (
@@ -270,7 +152,9 @@ export const TopBar: React.FC = () => {
                                     sx={{ cursor: 'default', whiteSpace: 'normal' }}
                                 >
                                     <ListItemIcon sx={{ minWidth: 36, alignSelf: 'flex-start', mt: 0.5 }}>
-                                        {n.severity === 'warning' ? (
+                                        {n.severity === 'error' ? (
+                                            <ErrorOutlineIcon fontSize="small" color="error" />
+                                        ) : n.severity === 'warning' ? (
                                             <WarningAmberIcon fontSize="small" color="warning" />
                                         ) : (
                                             <InfoOutlinedIcon fontSize="small" color="info" />
@@ -290,7 +174,6 @@ export const TopBar: React.FC = () => {
                             ))
                         )}
                     </Menu>
-                </Box>
             </Box>
         </Box>
     );

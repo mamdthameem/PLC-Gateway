@@ -58,11 +58,24 @@ const SidebarInner: React.FC = () => {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
 
         {/* Logo row */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '0 8px', marginBottom: 20, overflow: 'hidden' }}>
-          <img
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          // Collapsed, the rail leaves only 44px of content width, so the row gives up its own
+          // padding to let the logo have all of it.
+          padding: open ? '0 4px' : 0,
+          marginBottom: 20,
+          overflow: 'hidden',
+        }}>
+          {/* Logo is 398x209 (≈1.9:1) — the box keeps that ratio so `contain` wastes no
+              space, and it shrinks on collapse to stay inside the 64px rail. */}
+          <motion.img
             src={`${import.meta.env.BASE_URL}Untitled_design-removebg-preview.png`}
-            alt="SENSE SHOT"
-            style={{ width: 32, height: 28, objectFit: 'contain', flexShrink: 0 }}
+            alt="SHOT SENSE"
+            animate={{ width: open ? 62 : 44, height: open ? 33 : 23 }}
+            transition={{ duration: 0.2 }}
+            style={{ objectFit: 'contain', flexShrink: 0 }}
           />
           <motion.span
             animate={{ opacity: open ? 1 : 0, x: open ? 0 : -8 }}
@@ -77,7 +90,7 @@ const SidebarInner: React.FC = () => {
               pointerEvents: 'none',
             }}
           >
-            SENSE SHOT
+            SHOT SENSE
           </motion.span>
         </div>
 

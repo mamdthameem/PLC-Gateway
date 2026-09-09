@@ -59,15 +59,15 @@ export function exportFilteredWorkbook(input: FilteredExportInput): void {
     ['Filter', label],
     // "item" is the user-facing word for what the wire format calls a metal filter.
     ['Filter mode', filterBy === 'metal' ? 'item' : filterBy],
-    ...(itemName ? [['Casting item', itemName]] : []),
+    ...(itemName ? [['Item', itemName]] : []),
     ...(filterBy === 'time'
-      ? [['Range', `${localStamp(filterStart)} → ${localStamp(filterEnd)}`]]
+      ? [['Range', `${localStamp(filterStart)} to ${localStamp(filterEnd)}`]]
       : []),
     ['Exported', new Date().toLocaleString()],
     [],
     ['Parameter', 'Raw value', 'Display value'],
     ...results.map(r => [
-      PARAM_META[r.parameterName]?.label ?? r.parameterName,
+      PARAM_META[r.parameterName]?.section2Label ?? PARAM_META[r.parameterName]?.label ?? r.parameterName,
       r.value,
       formatParameterValue(r.parameterName, r.value),
     ]),
@@ -77,7 +77,7 @@ export function exportFilteredWorkbook(input: FilteredExportInput): void {
   // Sheet 2 — production per casting item (summed declared weights).
   const itemTotal = items.reduce((sum, i) => sum + i.productionKg, 0);
   const itemRows = [
-    ['Casting item', 'Declared weight (kg)'],
+    ['Item', 'Weight (kg)'],
     ...items.map(i => [i.metalName, i.productionKg]),
     ...(items.length > 0 ? [['Total', itemTotal]] : []),
   ];
@@ -87,10 +87,10 @@ export function exportFilteredWorkbook(input: FilteredExportInput): void {
   // though Section 2 no longer renders a cycle table on screen.
   const cycleRows = [
     [
-      'Cycle #', 'Start', 'End',
+      'Cycle No.', 'Start Time', 'End Time',
       'Item 1', 'Item 1 kg', 'Item 2', 'Item 2 kg',
       'Item 3', 'Item 3 kg', 'Item 4', 'Item 4 kg',
-      'Production (kg)', 'Energy (kWh)',
+      'Weight (kg)', 'Energy (kWh)',
     ],
     ...cycles.map(c => [
       c.cycleNumber,

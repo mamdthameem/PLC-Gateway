@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { Box, Container, Divider, Typography } from '@mui/material';
+import { Box, Container, Divider } from '@mui/material';
 import FilterBar, { type FilterCalcState } from './FilterBar';
 import MachineStatusTile from './MachineStatusTile';
 import { LifetimeSection } from './LifetimeSection';
@@ -11,6 +11,13 @@ import {
   SECTION1_ONLY_PARAM_KEYS, SHARED_PARAM_KEYS,
   type FilterRequest, type Section2ParamKey,
 } from '../types';
+
+// The all-time block above the filter shows everything Section 1 computes, in PARAM_ORDER —
+// the unfilterable parameters and the ones that also have a Section 2 form.
+const ALL_SECTION1_PARAM_KEYS: readonly string[] = [
+  ...SECTION1_ONLY_PARAM_KEYS,
+  ...SHARED_PARAM_KEYS,
+];
 
 interface AppliedContext {
   requestId: number;
@@ -24,28 +31,40 @@ interface AppliedContext {
   selectedParameters: Section2ParamKey[];
 }
 
+/** Display names for presets whose button label is not just the capitalised wire value. */
+const PERIOD_DISPLAY: Record<string, string> = { day: 'Yesterday' };
+
 function filterLabel(req: FilterRequest): string {
   if (req.filterBy === 'cycle') return `Cycles ${req.filterCycleFrom}–${req.filterCycleTo}`;
   // The wire field is filterMetalName; the user-facing word is "Item".
   if (req.filterBy === 'metal') return `Item: ${req.filterMetalName}`;
-  if (req.periodLabel) return req.periodLabel.charAt(0).toUpperCase() + req.periodLabel.slice(1) + ' view';
+  if (req.periodLabel) {
+    return PERIOD_DISPLAY[req.periodLabel]
+      ?? req.periodLabel.charAt(0).toUpperCase() + req.periodLabel.slice(1);
+  }
   return 'Custom range';
 }
 
 /**
- * The dashboard is three blocks, and which parameter sits in which block is the whole design:
+ * The dashboard is three blocks:
  *
- *   1. ABOVE THE FILTER — parameters that exist ONLY in Section 1. Machine status, the two refill
- *      figures, effective shots usage, the shots-per-refill chart and spare health. None of these
- *      can be scoped by a filter, so the filter never touches them and they are never repeated
- *      below.
+ *   1. ABOVE THE FILTER — the COMPLETE Section 1 picture. Machine status, the Section 1-only
+ *      parameters (the two refill figures, effective shots usage), the parameters that also exist
+ *      in Section 2, the shots-per-refill chart, live impeller current and spare health. Read top
+ *      to bottom, this block answers "how is the machine doing, all time?" without the reader
+ *      having to apply a filter or scroll past one.
  *
  *   2. THE FILTER BAR.
  *
- *   3. BELOW THE FILTER — the parameters that exist in BOTH sections. With no filter applied they
- *      show their Section 1 (all-time, live) values; applying a filter replaces the same tiles
- *      with the Section 2 values for the chosen scope. Same parameters, same place on the page,
- *      different scope.
+ *   3. BELOW THE FILTER — the parameters that exist in BOTH sections. Unfiltered they show their
+ *      Section 1 values; applying a filter replaces them with the Section 2 values for the chosen
+ *      scope.
+ *
+ * The shared parameters therefore appear TWICE while no filter is applied — once in the all-time
+ * block above, once below. That repetition is deliberate and was asked for: the upper block is a
+ * fixed all-time reference that never moves, and the lower block is the one that changes when a
+ * filter is applied, so a reader can compare a filtered figure against its all-time counterpart
+ * without clearing the filter. An earlier revision removed the duplication; it is back by request.
  *
  * Nothing is calculated until Apply is pressed. Section 2 is an on-demand computation that writes
  * a calculation_requests row, so firing one on page load would charge every visitor for a
@@ -118,11 +137,16 @@ export const MachineDashboard: React.FC = () => {
       <Divider sx={{ my: 3 }} />
 
       <LifetimeSection
-        include={SECTION1_ONLY_PARAM_KEYS}
-        title="Section 1 — Lifetime Parameters"
-        subtitle="Cumulative since commissioning · these have no filtered equivalent and never respond to the filter"
+        include={ALL_SECTION1_PARAM_KEYS}
+        title="Lifetime Parameters"
         showShotsChart
       />
+
+      <Divider sx={{ mt: 3, mb: 2 }} />
+
+      {/* Live impeller current belongs to the all-time block too: unfiltered it is the 1 s
+          reading, which is a Section 1 fact. AmpsPanel renders its own heading. */}
+      <AmpsPanel />
 
       <Divider sx={{ my: 3 }} />
 
@@ -155,22 +179,10 @@ export const MachineDashboard: React.FC = () => {
         <Box>
           <LifetimeSection
             include={SHARED_PARAM_KEYS}
-            title="Section 1 — Real-time"
-            subtitle="All-time values, updating live · apply a filter above to see these same parameters for a chosen scope"
+            title="Filtered Parameters"
+            subtitle="No filter applied"
           />
 
-          <Divider sx={{ mt: 3, mb: 2 }} />
-
-          {/* Impeller current is the one shared output that is a panel rather than a tile.
-              Unfiltered it is the live 1 s reading; filtered it becomes the per-cycle average. */}
-          <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 0.25 }}>
-            Impeller Current
-          </Typography>
-          <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
-            Live current per impeller, refreshed every second. Tap a tile for the last completed
-            cycle&apos;s trace.
-          </Typography>
-          <AmpsPanel />
         </Box>
       )}
     </Container>
