@@ -27,7 +27,9 @@ public class SpareMonitoringService : BackgroundService
     private readonly string[] _spareNames;
     private readonly double[] _spareThresholds;
 
-    private const int ImpellerCount = 10;
+    // Impellers:Count, default 10. The expo rig has 2, and monitoring spares for impellers that
+    // are not on the machine would fill plc_spare_status with rows nothing can ever satisfy.
+    private readonly int ImpellerCount;
     private const int SpareCount    = 14;
 
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(10);
@@ -48,6 +50,7 @@ public class SpareMonitoringService : BackgroundService
                            ?? Array.Empty<string>();
         _spareThresholds = configuration.GetSection("MaintenanceThresholds:SpareLifeBlastHours").Get<double[]>()
                            ?? Array.Empty<double>();
+        ImpellerCount    = Math.Clamp(configuration.GetValue("Impellers:Count", 10), 1, 10);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

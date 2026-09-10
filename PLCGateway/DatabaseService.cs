@@ -13,13 +13,19 @@ public class DatabaseService
     private readonly int _maxRetries = 5;
     private readonly int _baseDelayMs = 500;
 
+    // How many impellers this machine has (Impellers:Count). Only the Section 2 per-impeller amps
+    // split needs it here — it builds its impeller list with generate_series rather than reading
+    // one from the data, so a fixed 10 would emit eight empty rows per cycle on a 2-impeller rig.
+    private readonly int _impellerCount;
+
     // Reconstructs the legacy string value from the typed columns (see SqlExpressions.TypedValue).
     private static readonly string ValueExpr = SqlExpressions.TypedValue();
 
-    public DatabaseService(string connectionString, ILogger<DatabaseService> logger)
+    public DatabaseService(string connectionString, ILogger<DatabaseService> logger, int impellerCount = 10)
     {
         _connectionString = connectionString ?? throw new ArgumentNullException(nameof(connectionString));
         _logger = logger;
+        _impellerCount = Math.Clamp(impellerCount, 1, 10);
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -669,7 +675,7 @@ public class DatabaseService
             SELECT @request_id, c.cycle_number, i.impeller_number, AVG(h.value_num)
             FROM UNNEST(@cycle_numbers, @blast_starts, @blast_ends)
                 AS c(cycle_number, blast_start, blast_end)
-            CROSS JOIN generate_series(1, 10) AS i(impeller_number)
+            CROSS JOIN generate_series(1, @impeller_count) AS i(impeller_number)
             LEFT JOIN plc_historical_data h
                 ON h.parameter_name = 'Current_imp_' || i.impeller_number
                AND h.timestamp > c.blast_start AND h.timestamp <= c.blast_end
@@ -687,6 +693,7 @@ public class DatabaseService
             cmd.Parameters.Add(new NpgsqlParameter("cycle_numbers", NpgsqlDbType.Array | NpgsqlDbType.Integer)  { Value = cycleNumbers });
             cmd.Parameters.Add(new NpgsqlParameter("blast_starts",  NpgsqlDbType.Array | NpgsqlDbType.Timestamp) { Value = blastStarts });
             cmd.Parameters.Add(new NpgsqlParameter("blast_ends",    NpgsqlDbType.Array | NpgsqlDbType.Timestamp) { Value = blastEnds });
+            cmd.Parameters.AddWithValue("impeller_count", _impellerCount);
             await cmd.ExecuteNonQueryAsync();
         }, $"InsertFilteredAmpsData request={requestId} cycles={cycles.Count}");
     }

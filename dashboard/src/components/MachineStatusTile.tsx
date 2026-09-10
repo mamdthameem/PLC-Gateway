@@ -28,12 +28,20 @@ export default function MachineStatusTile() {
 
   const value   = status?.value ?? null;
   const running = value !== null && value !== '0';
-  const label   = value === null ? '—' : running ? 'Running' : 'Stopped';
 
   // When the PLC link drops, the backend forces the machine value to 0 and flags the row stale,
-  // so "Stopped" is authoritative rather than a stale reading. Say why, otherwise a disconnected
-  // gateway is indistinguishable from a genuinely idle machine.
+  // so the off state is authoritative rather than a stale reading. Say why, otherwise a
+  // disconnected gateway is indistinguishable from a genuinely idle machine.
   const disconnected = status !== null && !status.plcConnected;
+
+  // A powered, reachable machine that is not blasting is IDLE — it is between loads, which is a
+  // normal operating state and most of any shift. STOPPED is reserved for the case where the
+  // gateway cannot reach the PLC, where the zero is inferred rather than measured. Collapsing the
+  // two would have a healthy machine between cycles reading the same as a dead link.
+  const label = value === null
+    ? '—'
+    : running ? 'Running'
+    : disconnected ? 'Stopped' : 'Idle';
 
   return (
     <Paper sx={{ p: 2.5, borderRadius: 2, display: 'flex', flexDirection: 'column', gap: 0.5 }}>

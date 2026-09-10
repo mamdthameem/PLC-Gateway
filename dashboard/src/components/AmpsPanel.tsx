@@ -83,6 +83,8 @@ export default function AmpsPanel() {
   if (loading) return <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}><CircularProgress /></Box>;
   if (error)   return <Alert severity="error">{error}</Alert>;
 
+  const cols = readings.length;
+
   return (
     <Box>
       <Typography variant="h6" mb={connected ? 2 : 0.5}>Impeller Current</Typography>
@@ -100,7 +102,16 @@ export default function AmpsPanel() {
       <Box
         sx={{
           display: 'grid',
-          gridTemplateColumns: { xs: 'repeat(2,1fr)', sm: 'repeat(3,1fr)', md: 'repeat(5,1fr)' },
+          // CENTRED, and width-capped rather than 1fr. The cap is what makes centring possible at
+          // all: a 1fr track always fills its container, so two impellers would stretch to half
+          // the screen each and justifyContent would have nothing left to centre.
+          // Ten impellers still lay out five to a row.
+          gridTemplateColumns: {
+            xs: `repeat(${Math.min(cols, 2)}, minmax(0, 1fr))`,
+            sm: `repeat(${Math.min(cols, 3)}, 200px)`,
+            md: `repeat(${Math.min(cols, 5)}, 200px)`,
+          },
+          justifyContent: 'center',
           gap: 2,
         }}
       >
@@ -110,11 +121,12 @@ export default function AmpsPanel() {
           const avg     = lastCycle[r.parameterName];
           const running = isFinite(amps) && amps >= RUNNING_THRESHOLD_A;
 
-          // Running: the live current is the headline. Stopped: the last cycle's average is, with
-          // the live zero kept visible underneath so the tile never pretends the machine is on.
-          const headline = running
-            ? `${amps.toFixed(2)} A`
-            : avg != null ? `${avg.toFixed(2)} A` : isFinite(amps) ? `${amps.toFixed(2)} A` : r.value;
+          // The headline is ALWAYS the live reading, including the 0 A of an idle machine. It
+          // briefly showed the last cycle's average instead, from when the demo dataset ended at a
+          // permanent shutdown and ten zeroes were all anyone saw. With the machine actually
+          // cycling that would misreport a stopped impeller as drawing 19 A. The average moved to
+          // the line underneath, where it is context for a zero rather than a substitute for it.
+          const headline = isFinite(amps) ? amps.toFixed(2) : r.value;
           return (
             <Box key={r.parameterName}>
               {/* The whole tile opens the history chart, matching ExpandableMetricCard — the
@@ -123,11 +135,18 @@ export default function AmpsPanel() {
                 variant="outlined"
                 onClick={() => setOpenImp(impNum)}
                 sx={{
-                  p: 1.5,
+                  p: 1.75,
                   borderRadius: 2,
                   position: 'relative',
                   cursor: 'pointer',
-                  transition: 'box-shadow 0.15s',
+                  // A fixed height keeps every tile identical whether it is showing a timestamp or
+                  // an Idle chip underneath, so a row of them does not sit on a ragged baseline.
+                  minHeight: 104,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'space-between',
+                  transition: 'box-shadow 0.15s, border-color 0.15s',
+                  borderColor: running ? 'primary.light' : undefined,
                   '&:hover': { boxShadow: 4 },
                 }}
               >
@@ -135,7 +154,7 @@ export default function AmpsPanel() {
                   <Typography
                     variant="caption"
                     color="text.secondary"
-                    sx={{ fontWeight: 600, fontSize: '0.65rem' }}
+                    sx={{ fontWeight: 700, fontSize: '0.68rem', letterSpacing: '0.04em' }}
                   >
                     {impellerLabel(r.parameterName)}
                   </Typography>
@@ -143,18 +162,23 @@ export default function AmpsPanel() {
                     <BarChartIcon sx={{ fontSize: '0.9rem', color: 'text.disabled' }} />
                   </Tooltip>
                 </Box>
-                <Typography
-                  variant="h6"
-                  sx={{
-                    fontWeight: 700,
-                    color: running ? 'primary.main' : 'text.secondary',
-                    fontSize: '1.1rem',
-                    textAlign: 'center',
-                    mt: 0.5,
-                  }}
-                >
-                  {headline}
-                </Typography>
+                <Box sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'center', gap: 0.5, mt: 1 }}>
+                  <Typography
+                    sx={{
+                      fontWeight: 700,
+                      color: running ? 'primary.main' : 'text.secondary',
+                      fontSize: '1.6rem',
+                      lineHeight: 1.1,
+                    }}
+                  >
+                    {headline}
+                  </Typography>
+                  <Typography
+                    sx={{ fontWeight: 600, color: 'text.disabled', fontSize: '0.85rem' }}
+                  >
+                    A
+                  </Typography>
+                </Box>
                 {running ? (
                   <Typography
                     variant="caption"
@@ -164,6 +188,9 @@ export default function AmpsPanel() {
                     {new Date(r.lastUpdated).toLocaleTimeString()}
                   </Typography>
                 ) : (
+                  /* The headline above is the LIVE reading, so this line must not claim to label
+                     it. It reports what the impeller last ran at: context for a zero, not a
+                     substitute for it. */
                   <Box display="flex" alignItems="center" justifyContent="center" gap={0.5} mt={0.25}>
                     {avg != null && (
                       <Typography
@@ -171,7 +198,7 @@ export default function AmpsPanel() {
                         color="text.disabled"
                         sx={{ fontSize: '0.6rem', lineHeight: 1.3 }}
                       >
-                        Last cycle average
+                        ran at {avg.toFixed(1)} A
                       </Typography>
                     )}
                     <Chip

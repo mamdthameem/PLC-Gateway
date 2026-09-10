@@ -19,7 +19,8 @@ var pgConn  = config.GetValue<string>("PostgreSQL:ConnectionString");
 builder.Services.AddSingleton(new PlcService(plcIp!, plcRack, plcSlot));
 builder.Services.AddSingleton<PlcConnectionState>();
 builder.Services.AddSingleton<DatabaseService>(sp =>
-    new DatabaseService(pgConn!, sp.GetRequiredService<ILogger<DatabaseService>>()));
+    new DatabaseService(pgConn!, sp.GetRequiredService<ILogger<DatabaseService>>(),
+                        config.GetValue("Impellers:Count", 10)));
 builder.Services.AddSingleton<CovDetectionService>(sp =>
     new CovDetectionService(sp.GetRequiredService<ILogger<CovDetectionService>>(), config));
 builder.Services.AddSingleton<CalculationService>(sp =>
@@ -37,8 +38,17 @@ bool demoMode = config.GetValue<bool>("Demo:Enabled");
 if (!demoMode)
     builder.Services.AddHostedService<GatewayWorker>();
 
+// EXPO ONLY. Drives a synthetic machine in real time (see ExpoSimulatorService). It REPLACES
+// CycleTrackingService rather than joining it: the tracker writes a plc_cycles row on the blast
+// falling edge, so both running would record the same blast twice, and the tracker would derive
+// energy from the amp samples instead of the fixed figure the expo is meant to show.
+bool expoSimulator = config.GetValue<bool>("Demo:Simulator:Enabled");
+if (expoSimulator)
+    builder.Services.AddHostedService<ExpoSimulatorService>();
+
 builder.Services.AddHostedService<AggregationService>();
-builder.Services.AddHostedService<CycleTrackingService>();
+if (!expoSimulator)
+    builder.Services.AddHostedService<CycleTrackingService>();
 builder.Services.AddHostedService<FilteredCalculationService>();
 builder.Services.AddHostedService<SpareMonitoringService>();
 builder.Services.AddHostedService<LicenseCheckService>();
@@ -96,8 +106,11 @@ using (var scope = app.Services.CreateScope())
     {
         if (!await users.AnyUsersAsync())
         {
-            var adminUser = config["Seed:AdminUsername"] ?? "admin";
-            var adminPass = config["Seed:AdminPassword"] ?? "admin123";
+            // Fallbacks only matter if the Seed block is missing entirely. They match
+            // appsettings.json so a config-less run cannot quietly create a different account
+            // from the documented one. (The "admin" below is the ROLE, not a username.)
+            var adminUser = config["Seed:AdminUsername"] ?? "sreesakthi";
+            var adminPass = config["Seed:AdminPassword"] ?? "sreesakthi";
             await users.InsertUserAsync(adminUser, $"{adminUser}@plc.local", "System Admin",
                 PasswordHasher.Hash(adminPass), "admin", null);
             logger.LogWarning("Seeded default admin user '{u}'. CHANGE THIS PASSWORD before production.", adminUser);

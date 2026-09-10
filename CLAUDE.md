@@ -480,6 +480,85 @@ any beat within `PeriodicHeartbeatSeconds` of an existing row. Per-cycle energy 
 
 ---
 
+## Expo simulator (`realtimedemo` branch only)
+
+`ExpoSimulatorService` drives a synthetic machine in real time on top of the seeded history, for a
+stand demo. It is enabled ONLY by `Demo:Simulator:Enabled` in `appsettings.Demo.json` and must
+never reach a real gateway.
+
+| Phase | Every | Writes | On screen |
+| ----- | ----- | ------ | --------- |
+| **RUN** (`RunMinutes`, 5) | 1 s | **Tier 1 only** — `Machine status`=1, `Current_imp_1..N` at `AmpsMin`–`AmpsMax`. Every `AmpSampleSeconds` the value written is also **buffered in memory** | Running, amps fluctuating, totals **frozen** |
+| **ROLL-UP** (once, at run end) | — | One transaction, in timestamp order: blast ON + machine ON @start, **the buffered amp samples**, blast OFF + machine OFF + `Tonnage` @end; a `plc_cycles` row with `production_kg`/`energy_kwh` written **as given**; Tier 1 `Tonnage`. Then `ComputeLifetimeParametersAsync` + `UpsertDailyTrendsAsync` immediately | production, energy, cycle count and blast time step up **together** |
+| **IDLE** (`IdleMinutes`, 2) | 1 s | Tier 1 only — status 0, amps 0 | Idle, 0 A, totals static |
+
+**The two-phase split is the whole design.** Writing the blast events live would leak two values
+out during the run: `blast_time_sec` measures an OPEN blast as `now − segmentStart`, so it ticks up
+every second, and `cycle_count` counts the RISING edge, which fires at the start. Writing a closed
+ON/OFF pair at the end is what makes all four land at once. Rows are inserted in timestamp order so
+`id` order still matches timestamp order.
+
+**Impeller current is buffered, not written live.** The values shown on screen are remembered and
+inserted at commit time, so the history matches the trace that was actually displayed AND the rows
+land between the blast start and end events — keeping `id` order equal to timestamp order, which
+the incremental aggregator depends on. Writing them live would have inverted the two, because the
+blast-ON row is backdated to the start of a run that has already finished. Without these rows the
+expo cycles would have no per-cycle average at all: the amps tile chart would break off and the
+"ran at N A" line under an idle tile would never appear.
+
+**It replaces `CycleTrackingService`** (see `Program.cs`) rather than running alongside it. The
+tracker writes a `plc_cycles` row on the falling edge, so both would record the same blast twice —
+and it derives `energy_kwh` from the amp samples, which for 2 impellers at ~19.5 A over 5 minutes is
+about 1.6 kWh, not the 3.5 the expo is meant to show.
+
+Each cycle also declares a casting item for the same weight, so Section 2 (which reports DECLARED
+weight, not `Tonnage`) sees the expo cycles instead of them vanishing from every item filter.
+
+> Energy per casting drifts slightly as the expo runs: 300 kg against 3.5 kWh is 0.012 kWh/kg
+> versus the seeded history's 0.140. After ~26 cycles (3 hours) the lifetime ratio moves about 2%.
+> The figures were specified by the client, so this is expected rather than a fault.
+
+---
+
+## `Impellers:Count`
+
+How many impellers the machine has; default **10**, expo rig **2**. One key drives the amps panel,
+the spare grid, the Section 2 per-impeller split and spare monitoring:
+
+| Reader | Use |
+| ------ | --- |
+| `AmpsService` | builds `Current_imp_N` names from the count |
+| `SpareMonitoringService` | only maintains spares for impellers that exist |
+| `SpareStatusService` | `WHERE impeller_num <= count` — **filters, never deletes**, so a database seeded for 10 impellers still works untouched on a 2-impeller rig |
+| `DatabaseService` (Section 2 amps) | `generate_series(1, @impeller_count)` |
+| Dashboard | derives everything from what the API returns; `SpareHealthTable` builds its columns from the rows themselves |
+
+Both amps panels and the spare table are **width-capped and CENTRED**. The cap is what makes
+centring work at all: `1fr` tracks always fill their container, so two impellers would stretch to
+half the screen each and `justifyContent` would have nothing left to centre.
+
+Alignment went centred → left → centred across review rounds. Left-aligning was tried because the
+section headings are flush left and a centred block can read as detached from its own title; the
+table also looked cramped at the time, because it was `fit-content` and collapsed to ~110 px
+columns. Widening the columns (`SPARE_COL_WIDTH` + `IMPELLER_COL_WIDTH` per impeller) fixed the
+cramping, and centred is the chosen look. **Centred is the current decision — do not "correct" it
+back to left.**
+
+---
+
+## Running vs Idle vs Stopped
+
+`MachineStatusTile` shows three states, not two:
+
+- **Running** — blast on.
+- **Idle** — powered and reachable, not blasting. A normal state, and most of any shift.
+- **Stopped** — the gateway cannot reach the PLC, so the zero is inferred rather than measured
+  (the backend forces the value to 0 and flags the row stale).
+
+Collapsing Idle into Stopped made a healthy machine between loads read identically to a dead link.
+
+---
+
 ## Demo dataset: why it ends with the machine OFF
 
 `PLCGateway.DemoSeeder` stops at a completed shift boundary, so the live tiles show a stopped

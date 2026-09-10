@@ -10,7 +10,13 @@ import { usePlcConnection } from '../utils/usePlcConnection';
 
 const POLL_MS          = 10_000;
 const POPUP_COOLDOWN   = 30 * 60 * 1000; // 30 minutes
-const IMPELLER_COUNT   = 10;
+/** Column widths. The table's overall width is budgeted from these and the impeller count. */
+const SPARE_COL_WIDTH    = 220;
+const IMPELLER_COL_WIDTH = 190;
+
+// Impeller columns are derived from the rows the API returns, never assumed. The gateway serves
+// only the impellers the machine actually has (Impellers:Count), so a 2-impeller rig gets two
+// columns without the dashboard being told separately.
 
 interface PopupMsg { key: string; text: string }
 
@@ -88,7 +94,7 @@ export default function SpareHealthTable() {
   }, []);
 
   const spareNames = Array.from(new Set(rows.map(r => r.spareName)));
-  const impellers  = Array.from({ length: IMPELLER_COUNT }, (_, i) => i + 1);
+  const impellers  = Array.from(new Set(rows.map(r => r.impellerNum))).sort((a, b) => a - b);
   const cell       = (imp: number, spare: string) =>
     rows.find(r => r.impellerNum === imp && r.spareName === spare);
 
@@ -128,13 +134,30 @@ export default function SpareHealthTable() {
         </Alert>
       </Snackbar>
 
-      <TableContainer component={Paper} variant="outlined" sx={{ overflowX: 'auto' }}>
+      {/* CENTRED, and sized from the number of impellers rather than shrink-wrapped to its text.
+
+          `fit-content` was the previous rule and it made a 2-impeller table cramped: it collapsed
+          to the narrowest layout the content allowed, so "260.8 hrs / 300.0 hrs" sat in a ~110 px
+          column. Growing to the full page width is the opposite failure — three columns stretched
+          across a wide monitor. Budgeting a width per impeller gives each cell room to breathe,
+          leaves the block narrow enough for `mx: auto` to actually centre it, and still scrolls
+          horizontally once there are enough impellers to overflow. */}
+      <TableContainer
+        component={Paper}
+        variant="outlined"
+        sx={{
+          overflowX: 'auto',
+          width: '100%',
+          maxWidth: SPARE_COL_WIDTH + impellers.length * IMPELLER_COL_WIDTH,
+          mx: 'auto',
+        }}
+      >
         <Table size="small" stickyHeader>
           <TableHead>
             <TableRow>
-              <TableCell sx={{ fontWeight: 700, minWidth: 150 }}>Spare Part</TableCell>
+              <TableCell sx={{ fontWeight: 700, minWidth: SPARE_COL_WIDTH }}>Spare Part</TableCell>
               {impellers.map(i => (
-                <TableCell key={i} align="center" sx={{ fontWeight: 700, minWidth: 110 }}>
+                <TableCell key={i} align="center" sx={{ fontWeight: 700, minWidth: IMPELLER_COL_WIDTH }}>
                   Impeller {i}
                 </TableCell>
               ))}

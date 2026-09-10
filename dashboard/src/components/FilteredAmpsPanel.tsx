@@ -51,6 +51,8 @@ export default function FilteredAmpsPanel({ requestId }: Props) {
   if (error)   return <Alert severity="error">{error}</Alert>;
   if (!readings.length) return <Alert severity="info">No completed blast cycles fall within this filter.</Alert>;
 
+  const cols = readings.length;
+
   return (
     <Box>
       {/* Ten impellers, five to a row — a 6-column grid split them 6 + 4, which reads as though
@@ -59,7 +61,16 @@ export default function FilteredAmpsPanel({ requestId }: Props) {
       <Box
         sx={{
           display: 'grid',
-          gridTemplateColumns: { xs: 'repeat(2,1fr)', sm: 'repeat(3,1fr)', md: 'repeat(5,1fr)' },
+          // CENTRED, and width-capped rather than 1fr. The cap is what makes centring possible at
+          // all: a 1fr track always fills its container, so two impellers would stretch to half
+          // the screen each and justifyContent would have nothing left to centre.
+          // Ten impellers still lay out five to a row.
+          gridTemplateColumns: {
+            xs: `repeat(${Math.min(cols, 2)}, minmax(0, 1fr))`,
+            sm: `repeat(${Math.min(cols, 3)}, 200px)`,
+            md: `repeat(${Math.min(cols, 5)}, 200px)`,
+          },
+          justifyContent: 'center',
           gap: 2,
         }}
       >
