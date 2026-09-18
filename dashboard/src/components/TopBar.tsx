@@ -29,11 +29,13 @@ export const TopBar: React.FC = () => {
     const { notifications, unreadCount } = useNotifications();
     const [notificationAnchor, setNotificationAnchor] = useState<null | HTMLElement>(null);
 
+    // The dashboard is the product's front page, so it carries the product NAME rather than the
+    // generic word "Dashboard" — which said nothing and duplicated the sidebar link beside it.
+    // Other pages keep their own page name.
     const getTitle = () => {
         const path = location.pathname;
-        if (path === '/dashboard' || path === '/') return 'Dashboard';
         if (path === '/database') return 'Database';
-        return 'Dashboard';
+        return 'Shot Sense';
     };
 
 

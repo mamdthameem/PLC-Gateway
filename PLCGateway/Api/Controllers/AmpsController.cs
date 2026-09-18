@@ -19,7 +19,7 @@ public class AmpsController : ControllerBase
     }
 
     /// <summary>
-    /// Returns live amp readings for all 10 impellers from plc_current_values.
+    /// Returns live amp readings for the selected impellers (gateway_settings) from plc_current_values.
     /// Poll every 5 seconds for near-real-time display.
     /// </summary>
     [HttpGet]

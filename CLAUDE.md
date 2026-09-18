@@ -68,6 +68,7 @@ Industry project. A single **unified ASP.NET Core (.NET 10) application** hosted
 | `plc_daily_trends`            | Backend writes, Dashboard reads      | **Derived** daily rollup (one row per day) powering the all-time graphs. Rebuildable; never a substitute for Tier 2 |
 | `gateway_status`               | Backend                             | Single row — PLC connection state (`plc_connected`, `last_scan_at`)    |
 | `gateway_license_state`        | Backend                             | Single row — last successful cloud license check                       |
+| `gateway_settings`             | Backend (dashboard saves via API)   | Single row — `selected_impellers`: which impellers are shown AND counted in energy / spares. See "Impeller selection" |
 | `users`                        | Backend                             | Dashboard login accounts (local; no tenant/subscription)               |
 
 
@@ -85,7 +86,7 @@ Industry project. A single **unified ASP.NET Core (.NET 10) application** hosted
 | `AggregationService`         | 1 min      | Calls `ComputeLifetimeParametersAsync()` — **incremental/watermarked** → `plc_lifetime_parameters` + `plc_shots_breakdown`; then refreshes `plc_daily_trends` for **yesterday + today only** (bounded work per pass) |
 | `CycleTrackingService`       | 2s         | Falling edge on `Blast ON/OFF` → reads Tier 1 for metal/tonnage → writes `plc_cycles` (with computed `production_kg`, `energy_kwh`) |
 | `FilteredCalculationService` | 5s poll    | Picks up pending `calculation_requests`, computes **only the parameters the request selected** + per-item production split |
-| `SpareMonitoringService`     | 10s        | Reads 140 trigger/runhour/replaced tags → upserts `plc_spare_status` (skips while PLC disconnected) |
+| `SpareMonitoringService`     | 10s        | Reads trigger/runhour/replaced tags for the **selected** impellers (140 with all ten) → upserts `plc_spare_status` (skips while PLC disconnected) |
 | `LicenseCheckService`        | 60 min     | Cloud license check with grace period; on expiry locks the data API/dashboard (recording continues) |
 | `CalculationService`         | shared lib | Math: `ComputeLifetimeParametersAsync` (incremental), `ComputeFilteredParametersAsync`      |
 | `PlcService`                 | —          | S7.NetPlus wrapper: batched `ReadRegion`; reserved `Write` for spares REPLACED write-back  |
@@ -108,7 +109,7 @@ Industry project. A single **unified ASP.NET Core (.NET 10) application** hosted
 | `machine_status`            | `value ≠ "0" → 1, else 0`                                                           | `Machine status` BYTE at `DB60.DBB0`, live from Tier 1 |
 | `machine_utility_pct`       | `blast_time_sec ÷ machine_on_time_sec × 100`                                        | `Blast ON/OFF`, `Machine status` from Tier 2           |
 | `production_qty_kg`         | Latest raw `Tonnage` value                                                          | `Tonnage` from Tier 1 (PLC is running accumulator)     |
-| `energy_kwh_total`          | `Σ (avg_amps_per_impeller × cycle_duration_hours)` across 10 impellers × all cycles | `plc_cycles` + `Current_imp_1`…`10` from Tier 2        |
+| `energy_kwh_total`          | `Σ (avg_amps_per_impeller × cycle_duration_hours)` across the **selected** impellers (`gateway_settings`) × all cycles | `plc_cycles` + `Current_imp_N` from Tier 2 |
 | `energy_per_casting_kwh_kg` | `energy_kwh_total ÷ production_qty_kg`                                              | derived                                                |
 | `blast_time_sec`            | Total seconds where `Blast ON/OFF = true`                                           | `Blast ON/OFF` Tier 2                                  |
 | `cycle_count`               | Rising edges `0→1` on `Blast ON/OFF`                                                | `Blast ON/OFF` Tier 2                                  |
@@ -176,7 +177,7 @@ Maintained by the incremental engine via upsert (no TRUNCATE), so the dashboard 
 
 | What                    | Source               | Query pattern                                                                 |
 | ----------------------- | -------------------- | ----------------------------------------------------------------------------- |
-| Amps per impeller (×10) | `plc_current_values` | `WHERE parameter_name = 'Current_imp_N'`, ordered by `substring(parameter_name from '[0-9]+$')::int` — a plain `ORDER BY parameter_name` is a TEXT sort, which puts `Current_imp_10` directly after `Current_imp_1`. Both amps panels lay the ten tiles out five to a row (CSS grid; MUI's 12 columns cannot divide into fifths) |
+| Amps per selected impeller | `plc_current_values` | `WHERE parameter_name = 'Current_imp_N'`, ordered by `substring(parameter_name from '[0-9]+$')::int` — a plain `ORDER BY parameter_name` is a TEXT sort, which puts `Current_imp_10` directly after `Current_imp_1`. Both amps panels lay the ten tiles out five to a row (CSS grid; MUI's 12 columns cannot divide into fifths) |
 | Spare health (140 rows) | `plc_spare_status`   | All rows, or `WHERE trigger_active = TRUE AND threshold_hours > 0` for alerts |
 
 
@@ -211,7 +212,7 @@ state), so it is filtered out of the grid itself.
 | `energy_per_casting_kwh_kg` | **n/a — scalar only** | **n/a — scalar only.** kWh/kg drifts by thousandths across a bucket, so any axis fitted to it turns rounding into an apparent trend |
 | `blast_time_sec` | Blast hours per bucket, `/api/trends` (`blast_on_sec`) | Same chart over the filter window (time filter only) |
 | `cycle_count` | Completed cycles per bucket, `/api/trends` (`cycle_count`) | Same chart over the filter window (time filter only) |
-| Amps tile (×10) | **Every recorded cycle, one point each** — that cycle's average current (`GET /api/amps/by-cycle`); 1 463 cycles in ~130 ms / 109 KB. The x-axis is CYCLE NUMBER, not time, so the trace does not return to zero between points and must not: nothing exists "between" cycle 960 and 961 to plot. The rise across the series is the blade-wear model. A per-sample view on 5/25/100-cycle ranges was built alongside this and **removed as redundant**; restoring it needs a time axis over a bounded window, since per-second detail across all cycles is ~178 000 samples per impeller. The tile headline is the live Tier 1 reading while the impeller turns, and the **last completed cycle's average** (`GET /api/amps/last-cycle`) while it does not, with the live 0 A kept underneath | Same tile/dialog layout, driven by the FilterBar (all three modes, incl. custom range): tile shows a duration-weighted average current for the filter's cycles (`plc_filtered_amps_data`), dialog chart is one point per cycle (`AVG(value_num)` in that cycle's blast window) instead of raw per-second samples. **All cycles are plotted** — the old 200-cycle cap silently dropped ~1 250 of 1 448 while the tile beside it averaged every one |
+| Amps tile (×10) | **Every recorded cycle, one point each** — that cycle's average current (`GET /api/amps/by-cycle`); 1 463 cycles in ~130 ms / 109 KB. The x-axis is CYCLE NUMBER, not time, so the trace does not return to zero between points and must not: nothing exists "between" cycle 960 and 961 to plot. The rise across the series is the blade-wear model. A per-sample view on 5/25/100-cycle ranges was built alongside this and **removed as redundant**; restoring it needs a time axis over a bounded window, since per-second detail across all cycles is ~178 000 samples per impeller. The tile headline is **always** the live Tier 1 reading, including 0 A between loads; while the impeller is not turning, the **last completed cycle's average** (`GET /api/amps/last-cycle`) is shown underneath as "ran at N A" | Same tile/dialog layout, driven by the FilterBar (all three modes, incl. custom range): tile shows a duration-weighted average current for the filter's cycles (`plc_filtered_amps_data`), dialog chart is one point per cycle (`AVG(value_num)` in that cycle's blast window) instead of raw per-second samples. **All cycles are plotted** — the old 200-cycle cap silently dropped ~1 250 of 1 448 while the tile beside it averaged every one |
 | "Blast Cycles per Refill Interval" | Bar chart of `plc_shots_breakdown` — one bar per refill, height = blast cycles until the next refill. Labels are **date only**; a clock time is added only to bars that share a date with another | **n/a — removed from Section 2.** A refill interval spans whatever cycles fall in it, mixing items, so no filter scopes it meaningfully. Section 1 only, above the filter bar |
 
 `effective_shots_usage_kg_per_ton` has no graph in either section — no `plc_daily_trends` rollup
@@ -324,7 +325,8 @@ their values are last-known and not advancing. Recording continues regardless.
 
 ## Spare monitoring
 
-10 impellers × 14 spares = 140 rows. Tag patterns:
+10 impellers × 14 spares = 140 rows, monitored and shown only for the selected impellers (see
+"Impeller selection"). Tag patterns:
 
 - Trigger: `Spares trigger imp{N}[{M}]` (BOOL) — set by PLC when run-hour threshold crossed
 - Run hours: `Spares_Runhour_imp{N}[{M}]` (REAL) — accumulated hours, reset by PLC on replacement
@@ -346,6 +348,7 @@ Thresholds (spare_index 0–13, hours): 100, 300, 300, 600, 2000, 2000, 300, 200
 | `PLCGateway/Program.cs`                    | **WebApplication** setup — hosted services + API + static SPA + JWT + middleware |
 | `PLCGateway/GatewayWorker.cs`              | Batched PLC scan loop + connection-state hooks                            |
 | `PLCGateway/PlcConnectionState.cs`         | Shared PLC connect/disconnect state                                       |
+| `PLCGateway/ImpellerSelection.cs`          | In-memory impeller selection (loaded from `gateway_settings`), read by every impeller-aware service |
 | `PLCGateway/TagParser.cs`                  | Parses tags from raw DB byte regions (S7 big-endian)                      |
 | `PLCGateway/AggregationService.cs`         | Section 1 incremental computation trigger (1 min)                         |
 | `PLCGateway/CalculationService.cs`         | Parameter math — incremental Section 1 + Section 2 (+ metal split)        |
@@ -357,7 +360,7 @@ Thresholds (spare_index 0–13, hours): 100, 300, 300, 600, 2000, 2000, 300, 200
 | `PLCGateway/PlcService.cs`                 | S7.NetPlus wrapper — `ReadRegion`, reserved `Write`                       |
 | `PLCGateway/CovDetectionService.cs`        | COV logic (relative/absolute deadband, state-change)                     |
 | `PLCGateway/Models/*.cs`                   | `PlcCycle`, `CalculationRequest`, `AggregationState`, `ScanWrites`, …     |
-| `PLCGateway/Api/Controllers/*.cs`          | Dashboard API + `AuthController` (JWT) + `AdminController` (cloud pulls: `live`, `trends`, `filter`, `history`) + `TrendsController` (local dashboard's graph series, JWT-protected) |
+| `PLCGateway/Api/Controllers/*.cs`          | Dashboard API + `AuthController` (JWT) + `AdminController` (cloud pulls: `live`, `trends`, `filter`, `history`) + `TrendsController` (local dashboard's graph series, JWT-protected) + `SettingsController` (`GET/PUT /api/settings/impellers`) |
 | `PLCGateway/Api/Services/*.cs`             | API data services (typed reads), `TrendsService` (all graph math, `bucket=auto`, gap-fill), `UserService`, `LicenseState` |
 | `dashboard/src/utils/trendBuckets.ts`      | Axis + tooltip label formatting per bucket (selection moved server-side)  |
 | `dashboard/src/utils/chartAxis.ts`         | Shared axis construction — strided ticks, rounded y-domains, axis titles  |
@@ -368,6 +371,7 @@ Thresholds (spare_index 0–13, hours): 100, 300, 300, 600, 2000, 2000, 300, 200
 | `dashboard/src/components/ItemProductionGraph.tsx` | Section 2 production tile's graph — declared weight per casting item (replaced the per-metal table) |
 | `dashboard/src/components/FilterBar.tsx`    | Filter mode tabs + per-parameter toggles (Select All / Clear All); stays usable while a filter is applied |
 | `dashboard/src/utils/usePlcConnection.ts`  | Shared PLC-link poll behind the amps + spares staleness banners            |
+| `dashboard/src/components/ImpellerSelector.tsx` | Impeller number buttons + confirm dialog in the Live Impeller Current header. `services/settingsService.ts` fires `IMPELLER_SELECTION_CHANGED` after a save so the slow-polling panels reload at once |
 | `PLCGateway/Api/Middleware/*.cs`           | `AdminGuardMiddleware` (IP+key), `LicenseLockMiddleware` (402 when locked) |
 | `dashboard/`                               | **Dashboard source** (Vite + React + TS), vendored in-repo. `npm run build` emits into `PLCGateway/wwwroot` (same-origin). |
 | `PLCGateway/wwwroot/`                       | Built React dashboard (served same-origin) — generated from `dashboard/`   |
@@ -468,70 +472,52 @@ wording cannot drift between charts.
 ## Impeller currents are heartbeat tags
 
 `appsettings.json` lists `Current_imp_1…10` in `HeartbeatTags`, so a live gateway writes a row per
-impeller every 60 s **even at 0 A between loads**. `RawSeeder.HeartbeatTags()` originally omitted
-them, which left a 3–4 minute changeover carrying only two rows — the zero at blast end and the
-zero at the next blast start. The amps trace crossed the whole gap on one straight segment, so a
-tooltip anywhere along it reported the same timestamp. They are now emitted.
+impeller every 60 s **even at 0 A between loads**. Keep them there: without the heartbeat a 3–4
+minute changeover carries only two rows — the zero at blast end and the zero at the next blast
+start — so the amps trace crosses the whole gap on one straight segment and a tooltip anywhere
+along it reports the same timestamp.
 
-Blast periods are unaffected: the 5 s samples are denser than the heartbeat, and the emitter skips
-any beat within `PeriodicHeartbeatSeconds` of an existing row. Per-cycle energy is unchanged
-(`energy_per_casting_kwh_kg` stayed at 0.1399) because the idle rows fall outside every
-`[blast_start, blast_end]` window.
-
----
-
-## Expo simulator (`realtimedemo` branch only)
-
-`ExpoSimulatorService` drives a synthetic machine in real time on top of the seeded history, for a
-stand demo. It is enabled ONLY by `Demo:Simulator:Enabled` in `appsettings.Demo.json` and must
-never reach a real gateway.
-
-| Phase | Every | Writes | On screen |
-| ----- | ----- | ------ | --------- |
-| **RUN** (`RunMinutes`, 5) | 1 s | **Tier 1 only** — `Machine status`=1, `Current_imp_1..N` at `AmpsMin`–`AmpsMax`. Every `AmpSampleSeconds` the value written is also **buffered in memory** | Running, amps fluctuating, totals **frozen** |
-| **ROLL-UP** (once, at run end) | — | One transaction, in timestamp order: blast ON + machine ON @start, **the buffered amp samples**, blast OFF + machine OFF + `Tonnage` @end; a `plc_cycles` row with `production_kg`/`energy_kwh` written **as given**; Tier 1 `Tonnage`. Then `ComputeLifetimeParametersAsync` + `UpsertDailyTrendsAsync` immediately | production, energy, cycle count and blast time step up **together** |
-| **IDLE** (`IdleMinutes`, 2) | 1 s | Tier 1 only — status 0, amps 0 | Idle, 0 A, totals static |
-
-**The two-phase split is the whole design.** Writing the blast events live would leak two values
-out during the run: `blast_time_sec` measures an OPEN blast as `now − segmentStart`, so it ticks up
-every second, and `cycle_count` counts the RISING edge, which fires at the start. Writing a closed
-ON/OFF pair at the end is what makes all four land at once. Rows are inserted in timestamp order so
-`id` order still matches timestamp order.
-
-**Impeller current is buffered, not written live.** The values shown on screen are remembered and
-inserted at commit time, so the history matches the trace that was actually displayed AND the rows
-land between the blast start and end events — keeping `id` order equal to timestamp order, which
-the incremental aggregator depends on. Writing them live would have inverted the two, because the
-blast-ON row is backdated to the start of a run that has already finished. Without these rows the
-expo cycles would have no per-cycle average at all: the amps tile chart would break off and the
-"ran at N A" line under an idle tile would never appear.
-
-**It replaces `CycleTrackingService`** (see `Program.cs`) rather than running alongside it. The
-tracker writes a `plc_cycles` row on the falling edge, so both would record the same blast twice —
-and it derives `energy_kwh` from the amp samples, which for 2 impellers at ~19.5 A over 5 minutes is
-about 1.6 kWh, not the 3.5 the expo is meant to show.
-
-Each cycle also declares a casting item for the same weight, so Section 2 (which reports DECLARED
-weight, not `Tonnage`) sees the expo cycles instead of them vanishing from every item filter.
-
-> Energy per casting drifts slightly as the expo runs: 300 kg against 3.5 kWh is 0.012 kWh/kg
-> versus the seeded history's 0.140. After ~26 cycles (3 hours) the lifetime ratio moves about 2%.
-> The figures were specified by the client, so this is expected rather than a fault.
+Blast periods are unaffected, since the blast-time samples are denser than the heartbeat, and
+per-cycle energy is unchanged because the idle rows fall outside every `[blast_start, blast_end]`
+window.
 
 ---
 
-## `Impellers:Count`
+## Impeller selection (`gateway_settings.selected_impellers`)
 
-How many impellers the machine has; default **10**, expo rig **2**. One key drives the amps panel,
-the spare grid, the Section 2 per-impeller split and spare monitoring:
+Which impellers the site includes, picked with the number buttons in the **Live Impeller Current**
+header (`ImpellerSelector`). It replaced the expo-era `Impellers:Count` config key. The choice is
+**machine-wide** — saved on the gateway for every viewer and the cloud — and it is **not only a
+display filter: hidden impellers are left out of the calculations too.** Any signed-in user may
+change it (site decision, 2026-09-15).
 
-| Reader | Use |
-| ------ | --- |
-| `AmpsService` | builds `Current_imp_N` names from the count |
-| `SpareMonitoringService` | only maintains spares for impellers that exist |
-| `SpareStatusService` | `WHERE impeller_num <= count` — **filters, never deletes**, so a database seeded for 10 impellers still works untouched on a 2-impeller rig |
-| `DatabaseService` (Section 2 amps) | `generate_series(1, @impeller_count)` |
+| Reader | Effect |
+| ------ | ------ |
+| `DatabaseService.InsertCycleAsync` | per-cycle `energy_kwh` sums only the selected impellers (`EnergyKwhExpr`, `unnest(@impellers)`) |
+| `DatabaseService.InsertFilteredAmpsDataAsync` | the Section 2 per-impeller current split covers only the selected impellers |
+| `AmpsService` | live and last-cycle amps return only the selected impellers |
+| `SpareMonitoringService` | maintains spares for the selected impellers only |
+| `SpareStatusService` | `WHERE impeller_num = ANY(@imps)` — **filters, never deletes**; a deselected impeller's rows come back unchanged when it is selected again |
+| `AdminController` `/live` | adds `impellers.selected`; `amps` / `spareGrid` / `spareAlerts` hold only those impellers |
 | Dashboard | derives everything from what the API returns; `SpareHealthTable` builds its columns from the rows themselves |
+| `GatewayWorker` | **unaffected** — raw `Current_imp_1…10` are recorded for every impeller, always |
+
+**Saving recalculates all recorded energy.** `PUT /api/settings/impellers` →
+`CalculationService.ApplyImpellerSelectionAsync` → `DatabaseService.SaveImpellerSelectionAsync`,
+one transaction: `gateway_settings`, `plc_cycles.energy_kwh` for every cycle (re-read from Tier 2),
+`plc_daily_trends.energy_kwh` per day, and `plc_aggregation_state.energy_total`. The lifetime
+parameters are then re-emitted, so `energy_kwh_total`, `energy_per_casting_kwh_kg` and the energy
+graphs move together. Tier 2 is only read and no row is deleted. Selecting all ten again reproduces
+the original stored figures exactly (verified cycle by cycle on a copy of the real database).
+
+- **The Section 1 lock.** `CalculationService._section1Lock` serialises the aggregation pass, the
+  yesterday+today rollup refresh (`RefreshRecentDailyTrendsAsync`) and a selection save. Without it
+  a pass that loaded `plc_aggregation_state` before a save committed would write the OLD energy
+  total straight back. Anything new that writes Section 1 energy must take it.
+- **Not routed through `RetryAsync`,** which logs and swallows a final failure — the dashboard must
+  be told when a save did not happen. The in-memory selection is put back if the save fails.
+- **Section 2 results are snapshots.** A filter computed before a change keeps the old impeller set
+  until it is applied again; the confirm dialog says so.
 
 Both amps panels and the spare table are **width-capped and CENTRED**. The cap is what makes
 centring work at all: `1fr` tracks always fill their container, so two impellers would stretch to
@@ -546,33 +532,17 @@ back to left.**
 
 ---
 
-## Running vs Idle vs Stopped
+## Running vs Loading vs Stopped
 
 `MachineStatusTile` shows three states, not two:
 
 - **Running** — blast on.
-- **Idle** — powered and reachable, not blasting. A normal state, and most of any shift.
+- **Loading** — powered and reachable, not blasting: the plant is loading the next batch. A normal
+  state, and most of any shift. (Labelled "Idle" until 2026-09; only the wording changed.)
 - **Stopped** — the gateway cannot reach the PLC, so the zero is inferred rather than measured
   (the backend forces the value to 0 and flags the row stale).
 
-Collapsing Idle into Stopped made a healthy machine between loads read identically to a dead link.
-
----
-
-## Demo dataset: why it ends with the machine OFF
-
-`PLCGateway.DemoSeeder` stops at a completed shift boundary, so the live tiles show a stopped
-machine and 0 A. Ending the window **mid-blast** to make the dashboard look live was built and
-**reverted** — do not rebuild it:
-
-`CalculationService` measures an unfinished blast as `DateTime.Now − segmentStart` (line ~89), and
-`AggregationService` keeps running in demo mode (only `GatewayWorker` is skipped). A frozen dataset
-with an open blast therefore gains an hour of `blast_time_sec` every hour, so `machine_utility_pct`
-drifts upward for as long as the demo sits unopened. A demo shown the morning after seeding would
-have reported a machine that had been blasting all night.
-
-The tiles solve the presentation problem instead: they headline the last completed cycle's average
-current while the machine is idle, labelled as such. Honest data, informative tile.
+Collapsing Loading into Stopped made a healthy machine between loads read identically to a dead link.
 
 ---
 

@@ -27,8 +27,8 @@ interface Props {
  * which was wrong twice over.
  *
  * The x-axis is refill EVENTS, not a time axis. Refills are triggered by the hopper crossing its
- * low mark, not by a schedule, so intervals are irregular — in the demo data they run from 0.5 to
- * 4.7 days. Bars are therefore evenly spaced as a SEQUENCE, and the varying interval length is
+ * low mark, not by a schedule, so intervals are irregular — anything from hours to several days.
+ * Bars are therefore evenly spaced as a SEQUENCE, and the varying interval length is
  * carried in the tooltip rather than in the bar geometry. This chart cannot be read as "one bar
  * per day"; the daily view of blast cycles is the Blast Cycles tile's own graph.
  *

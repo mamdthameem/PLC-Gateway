@@ -18,37 +18,21 @@ var pgConn  = config.GetValue<string>("PostgreSQL:ConnectionString");
 // ── Core PLC pipeline (unchanged services) ───────────────────────────────────
 builder.Services.AddSingleton(new PlcService(plcIp!, plcRack, plcSlot));
 builder.Services.AddSingleton<PlcConnectionState>();
+builder.Services.AddSingleton<ImpellerSelection>();
 builder.Services.AddSingleton<DatabaseService>(sp =>
     new DatabaseService(pgConn!, sp.GetRequiredService<ILogger<DatabaseService>>(),
-                        config.GetValue("Impellers:Count", 10)));
+                        sp.GetRequiredService<ImpellerSelection>()));
 builder.Services.AddSingleton<CovDetectionService>(sp =>
     new CovDetectionService(sp.GetRequiredService<ILogger<CovDetectionService>>(), config));
 builder.Services.AddSingleton<CalculationService>(sp =>
     new CalculationService(sp.GetRequiredService<DatabaseService>(),
-        sp.GetRequiredService<ILogger<CalculationService>>(), config));
+        sp.GetRequiredService<ILogger<CalculationService>>(),
+        sp.GetRequiredService<ImpellerSelection>(), config));
 builder.Services.AddSingleton<LicenseState>();
 
-// Demo mode: the app is running against a pre-seeded dataset with NO PLC attached (expo /
-// offline demo — see PLCGateway.DemoSeeder). The scan loop is skipped because a failing PLC
-// connection would mark every Tier 1 row stale, force machine status OFF and write DISCONNECT
-// rows over the seeded history. Everything else — aggregation, cycle tracking, the filtered
-// calculation processor, the whole API — runs completely unchanged against the seeded rows.
-// Default is false, so a normal deployment is unaffected.
-bool demoMode = config.GetValue<bool>("Demo:Enabled");
-if (!demoMode)
-    builder.Services.AddHostedService<GatewayWorker>();
-
-// EXPO ONLY. Drives a synthetic machine in real time (see ExpoSimulatorService). It REPLACES
-// CycleTrackingService rather than joining it: the tracker writes a plc_cycles row on the blast
-// falling edge, so both running would record the same blast twice, and the tracker would derive
-// energy from the amp samples instead of the fixed figure the expo is meant to show.
-bool expoSimulator = config.GetValue<bool>("Demo:Simulator:Enabled");
-if (expoSimulator)
-    builder.Services.AddHostedService<ExpoSimulatorService>();
-
+builder.Services.AddHostedService<GatewayWorker>();
 builder.Services.AddHostedService<AggregationService>();
-if (!expoSimulator)
-    builder.Services.AddHostedService<CycleTrackingService>();
+builder.Services.AddHostedService<CycleTrackingService>();
 builder.Services.AddHostedService<FilteredCalculationService>();
 builder.Services.AddHostedService<SpareMonitoringService>();
 builder.Services.AddHostedService<LicenseCheckService>();
@@ -118,6 +102,17 @@ using (var scope = app.Services.CreateScope())
     }
     catch (Exception ex) { logger.LogError(ex, "User seeding failed."); }
 
+    // Impeller selection (gateway_settings). Loaded before any hosted service starts, so the first
+    // cycle closed and the first spare poll already honour it. With no row — or on a database the
+    // migration has not reached yet — every impeller stays selected.
+    try
+    {
+        var saved = await db.GetImpellerSelectionAsync();
+        if (saved is not null)
+            sp.GetRequiredService<ImpellerSelection>().Set(saved);
+    }
+    catch (Exception ex) { logger.LogError(ex, "Loading the impeller selection failed; using every impeller."); }
+
     // Ops recovery: reset the incremental Section 1 state to replay full history.
     if (args.Contains("--rebuild-aggregation"))
     {
@@ -142,31 +137,43 @@ using (var scope = app.Services.CreateScope())
 
     // Offline-gap handling: force machine/blast OFF backdated to the last recorded scan so the
     // unobserved gap contributes zero to every duration and accumulator.
-    //
-    // Skipped in demo mode: there is no PLC to have disconnected from, and running it would stamp
-    // the seeded dataset with a DISCONNECT row and mark all of Tier 1 stale.
-    if (demoMode)
+    try
     {
-        logger.LogWarning("DEMO MODE — PLC scan loop and startup gap handling are disabled. " +
-                          "Serving the pre-seeded dataset; no live PLC data will be recorded.");
+        var lastScan = await db.GetGatewayLastScanAtAsync();
+        await db.RecordPlcDisconnectAsync(lastScan ?? DateTime.Now,
+            GatewayWorker.MACHINE_STATUS_TAG_NAME, GatewayWorker.BLAST_TAG_NAME);
+        logger.LogInformation("Startup gap handled (last recorded scan: {last}).", lastScan);
     }
-    else
-    {
-        try
-        {
-            var lastScan = await db.GetGatewayLastScanAtAsync();
-            await db.RecordPlcDisconnectAsync(lastScan ?? DateTime.Now,
-                GatewayWorker.MACHINE_STATUS_TAG_NAME, GatewayWorker.BLAST_TAG_NAME);
-            logger.LogInformation("Startup gap handled (last recorded scan: {last}).", lastScan);
-        }
-        catch (Exception ex) { logger.LogError(ex, "Startup gap handling failed."); }
-    }
+    catch (Exception ex) { logger.LogError(ex, "Startup gap handling failed."); }
 }
 
 // ── HTTP pipeline ────────────────────────────────────────────────────────────
-// SPA static assets (React build in wwwroot)
+// SPA static assets (React build in wwwroot).
+//
+// Caching is set EXPLICITLY here because the defaults silently serve a stale dashboard after
+// every deployment. UseStaticFiles sends no Cache-Control at all, so a browser falls back to
+// heuristic freshness (~10% of the file's age) — an index.html first loaded hours ago stays
+// "fresh" for hours. Since `npm run build` empties wwwroot and emits a NEW content-hashed
+// bundle name, that cached index.html points at a bundle the build deleted: the panel keeps
+// running yesterday's JavaScript from disk cache and never asks the server, or 404s on the
+// script and renders an empty page. Neither failure is visible from the server side.
+//
+// So: /assets/* is content-hashed and immutable (a changed file always has a new name), while
+// index.html — the one filename that never changes — must be revalidated on every load.
+var spaStaticFiles = new StaticFileOptions
+{
+    OnPrepareResponse = ctx =>
+    {
+        var headers = ctx.Context.Response.Headers;
+        if (ctx.Context.Request.Path.StartsWithSegments("/assets"))
+            headers.CacheControl = "public, max-age=31536000, immutable";
+        else if (ctx.File.Name.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
+            headers.CacheControl = "no-cache, no-store, must-revalidate";
+    }
+};
+
 app.UseDefaultFiles();
-app.UseStaticFiles();
+app.UseStaticFiles(spaStaticFiles);
 
 // /api/admin/* is gated by IP allowlist + API key (before auth; not JWT-protected)
 app.UseMiddleware<AdminGuardMiddleware>();
@@ -180,7 +187,9 @@ app.UseMiddleware<LicenseLockMiddleware>();
 app.MapControllers();
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok" }));
 
-// SPA fallback: client-side routes (BrowserRouter) resolve to index.html
-app.MapFallbackToFile("index.html");
+// SPA fallback: client-side routes (BrowserRouter) resolve to index.html. Same options as
+// above — this is the path that serves /dashboard, so without them the no-cache header would
+// apply only to a bare "/" request and the stale-bundle problem would survive on every deep link.
+app.MapFallbackToFile("index.html", spaStaticFiles);
 
 app.Run();

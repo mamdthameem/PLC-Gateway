@@ -7,6 +7,7 @@ import { fetchSpareStatus } from '../services/spareStatusService';
 import type { SpareStatus } from '../types';
 import { formatRunHours } from '../utils/unitConverters';
 import { usePlcConnection } from '../utils/usePlcConnection';
+import { IMPELLER_SELECTION_CHANGED } from '../services/settingsService';
 
 const POLL_MS          = 10_000;
 const POPUP_COOLDOWN   = 30 * 60 * 1000; // 30 minutes
@@ -15,8 +16,8 @@ const SPARE_COL_WIDTH    = 220;
 const IMPELLER_COL_WIDTH = 190;
 
 // Impeller columns are derived from the rows the API returns, never assumed. The gateway serves
-// only the impellers the machine actually has (Impellers:Count), so a 2-impeller rig gets two
-// columns without the dashboard being told separately.
+// only the selected impellers (gateway_settings), so deselecting one removes its column without
+// the dashboard being told separately.
 
 interface PopupMsg { key: string; text: string }
 
@@ -90,7 +91,13 @@ export default function SpareHealthTable() {
 
     load();
     const id = setInterval(load, POLL_MS);
-    return () => { active = false; clearInterval(id); };
+    // A saved impeller selection adds or removes columns; reload now rather than in up to 10 s.
+    window.addEventListener(IMPELLER_SELECTION_CHANGED, load);
+    return () => {
+      active = false;
+      clearInterval(id);
+      window.removeEventListener(IMPELLER_SELECTION_CHANGED, load);
+    };
   }, []);
 
   const spareNames = Array.from(new Set(rows.map(r => r.spareName)));

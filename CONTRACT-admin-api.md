@@ -67,6 +67,7 @@ Render as delivered. Parse to number only for formatting/plotting — never for 
   "machineStatus":   { … } | null,
   "lifetime":        [ … ],
   "shotsBreakdown":  [ … ],
+  "impellers":       { "selected": [ … ] },
   "amps":            [ … ],
   "spareGrid":       [ … ],
   "spareAlerts":     [ … ],
@@ -83,8 +84,9 @@ Render as delivered. Parse to number only for formatting/plotting — never for 
 | `machineStatus` | object, nullable | Running/stopped tile (null only before the first-ever PLC scan) |
 | `lifetime` | array | Section 1 lifetime parameters (all-time KPIs) |
 | `shotsBreakdown` | array | Section 1 shots-per-refill table (chart data) |
-| `amps` | array | Live current per impeller, 10 entries |
-| `spareGrid` | array | Full spare-health grid, 140 entries (10 impellers × 14 spares) |
+| `impellers` | object | `{ "selected": [1, 2, …] }` — the site's impeller selection (`gateway_settings`), ascending integers 1–10. `amps`, `spareGrid` and `spareAlerts` hold **only** these impellers, and every energy figure (lifetime, trends, Section 2) counts only these. Added 2026-09-15; additive |
+| `amps` | array | Live current per **selected** impeller — one entry each, up to 10 |
+| `spareGrid` | array | Spare-health grid, 14 entries per **selected** impeller (140 with all ten) |
 | `spareAlerts` | array | Subset of `spareGrid` where `triggerActive` is true and `thresholdHours > 0` |
 | `section2` | object, nullable | Latest **completed** filtered calculation — from either side, see below (null until one exists) |
 
@@ -153,7 +155,7 @@ Ordered by `refillTimestamp` ascending. Blast count between consecutive shot ref
 
 ## `amps[]`
 
-10 entries, one per impeller. **Ordered lexicographically by `parameterName`**, i.e.
+One entry per selected impeller (see `impellers`), up to 10 — do not assume ten. **Ordered lexicographically by `parameterName`**, i.e.
 `Current_imp_1`, `Current_imp_10`, `Current_imp_2`, … `Current_imp_9` — sort client-side by the
 numeric suffix if you need 1…10 display order.
 
@@ -165,7 +167,7 @@ numeric suffix if you need 1…10 display order.
 
 ## `spareGrid[]` and `spareAlerts[]`
 
-Identical entry shape. `spareGrid` has all 140 rows ordered by (`impellerNum`, `spareIndex`);
+Identical entry shape. `spareGrid` has 14 rows per selected impeller (140 with all ten), ordered by (`impellerNum`, `spareIndex`);
 `spareAlerts` repeats the rows where `triggerActive == true && thresholdHours > 0`.
 
 | Field | JSON type | Description |

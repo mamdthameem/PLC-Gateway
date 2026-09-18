@@ -468,3 +468,19 @@ CREATE TABLE IF NOT EXISTS plc_spare_status (
     last_updated_at     TIMESTAMP DEFAULT NOW(),
     PRIMARY KEY (impeller_num, spare_index)
 );
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- GATEWAY SETTINGS: single row of site settings changed from the dashboard.
+-- selected_impellers = the impellers every panel shows AND the calculations count (per-cycle
+-- energy, Section 2 current split, spare monitoring). Saving a new selection recalculates
+-- plc_cycles.energy_kwh, plc_daily_trends.energy_kwh and the running energy total. Raw
+-- Current_imp_N readings keep being recorded for all 10 impellers regardless.
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS gateway_settings (
+    id                  INTEGER     PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    selected_impellers  SMALLINT[]  NOT NULL DEFAULT '{1,2,3,4,5,6,7,8,9,10}',
+    updated_at          TIMESTAMP,
+    updated_by          VARCHAR(100)
+);
+
+INSERT INTO gateway_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;

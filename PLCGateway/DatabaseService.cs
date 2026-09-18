@@ -13,19 +13,18 @@ public class DatabaseService
     private readonly int _maxRetries = 5;
     private readonly int _baseDelayMs = 500;
 
-    // How many impellers this machine has (Impellers:Count). Only the Section 2 per-impeller amps
-    // split needs it here — it builds its impeller list with generate_series rather than reading
-    // one from the data, so a fixed 10 would emit eight empty rows per cycle on a 2-impeller rig.
-    private readonly int _impellerCount;
+    // The impellers the site includes (gateway_settings). Per-cycle energy and the Section 2
+    // per-impeller amps split both count only these.
+    private readonly ImpellerSelection _impellers;
 
     // Reconstructs the legacy string value from the typed columns (see SqlExpressions.TypedValue).
     private static readonly string ValueExpr = SqlExpressions.TypedValue();
 
-    public DatabaseService(string connectionString, ILogger<DatabaseService> logger, int impellerCount = 10)
+    public DatabaseService(string connectionString, ILogger<DatabaseService> logger, ImpellerSelection impellers)
     {
         _connectionString = connectionString ?? throw new ArgumentNullException(nameof(connectionString));
         _logger = logger;
-        _impellerCount = Math.Clamp(impellerCount, 1, 10);
+        _impellers = impellers;
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -327,8 +326,8 @@ public class DatabaseService
 
         // production_kg and energy_kwh are computed once here at cycle close:
         //   production_kg = accumulated tonnage delta vs the previous cycle, floored at 0
-        //   energy_kwh    = Σ over 10 impellers of (avg amps in window, else last amp before
-        //                   the cycle, else 0) × duration hours
+        //   energy_kwh    = Σ over the SELECTED impellers of (avg amps in window, else last amp
+        //                   before the cycle, else 0) × duration hours — see EnergyKwhExpr
         // This is the single source of truth for lifetime energy (summed) and windowed
         // per-metal production (split by metal weight), so no per-cycle amp re-query is needed
         // during aggregation.
@@ -340,7 +339,7 @@ public class DatabaseService
         // RetryAsync swallows it after its retries, and plc_cycles silently never gains a row.
         // The migration's backfill does the same arithmetic against the NUMERIC duration_sec
         // COLUMN, which is why it works and masked this for so long.
-        const string sql = @"
+        string sql = $@"
             INSERT INTO plc_cycles
                 (blast_start, blast_end, duration_sec,
                  metal_1_name, metal_1_weight_kg,
@@ -356,19 +355,7 @@ public class DatabaseService
                       ELSE GREATEST(@tonnage - COALESCE(
                            (SELECT tonnage_kg FROM plc_cycles ORDER BY cycle_number DESC LIMIT 1), 0), 0)
                  END,
-                 ROUND((SELECT COALESCE(SUM(
-                        COALESCE(
-                            (SELECT AVG(h.value_num) FROM plc_historical_data h
-                              WHERE h.parameter_name = 'Current_imp_' || g
-                                AND h.timestamp > @blast_start AND h.timestamp <= @blast_end
-                                AND h.value_num IS NOT NULL),
-                            (SELECT h2.value_num FROM plc_historical_data h2
-                              WHERE h2.parameter_name = 'Current_imp_' || g
-                                AND h2.timestamp <= @blast_start AND h2.value_num IS NOT NULL
-                              ORDER BY h2.timestamp DESC LIMIT 1),
-                            0)
-                     ), 0)
-                  FROM generate_series(1, 10) g) * (@duration_sec / 3600.0)::numeric, 6))
+                 {EnergyKwhExpr("@blast_start", "@blast_end", "(@duration_sec / 3600.0)::numeric")})
             RETURNING cycle_number";
 
         await RetryAsync(async conn =>
@@ -386,6 +373,7 @@ public class DatabaseService
             cmd.Parameters.AddWithValue("m4n", string.IsNullOrWhiteSpace(metal4Name) ? (object)DBNull.Value : metal4Name);
             cmd.Parameters.AddWithValue("m4w", metal4Wt.HasValue ? (object)metal4Wt.Value : DBNull.Value);
             cmd.Parameters.AddWithValue("tonnage", tonnageKg.HasValue ? (object)tonnageKg.Value : DBNull.Value);
+            cmd.Parameters.Add(new NpgsqlParameter("impellers", NpgsqlDbType.Array | NpgsqlDbType.Integer) { Value = _impellers.Snapshot() });
             var scalar = await cmd.ExecuteScalarAsync();
             if (scalar != null && scalar != DBNull.Value)
                 cycleNumber = Convert.ToInt32(scalar);
@@ -393,6 +381,26 @@ public class DatabaseService
 
         return cycleNumber;
     }
+
+    // Per-cycle energy in kWh as one SQL expression: Σ over the selected impellers (@impellers, an
+    // integer[]) of (avg amps inside the blast window, else that impeller's last reading before the
+    // cycle, else 0) × duration hours. Cycle close (InsertCycleAsync) and the recalculation a new
+    // selection triggers (SaveImpellerSelectionAsync) both build their SQL from this, so a
+    // recalculated cycle and a freshly closed one can never be computed differently.
+    private static string EnergyKwhExpr(string blastStart, string blastEnd, string durationHours) => $@"
+                 ROUND((SELECT COALESCE(SUM(
+                        COALESCE(
+                            (SELECT AVG(h.value_num) FROM plc_historical_data h
+                              WHERE h.parameter_name = 'Current_imp_' || g
+                                AND h.timestamp > {blastStart} AND h.timestamp <= {blastEnd}
+                                AND h.value_num IS NOT NULL),
+                            (SELECT h2.value_num FROM plc_historical_data h2
+                              WHERE h2.parameter_name = 'Current_imp_' || g
+                                AND h2.timestamp <= {blastStart} AND h2.value_num IS NOT NULL
+                              ORDER BY h2.timestamp DESC LIMIT 1),
+                            0)
+                     ), 0)
+                  FROM unnest(@impellers) g) * {durationHours}, 6)";
 
     // Returns the blast_end of the most recently logged cycle (watermark for CycleTrackingService).
     public async Task<DateTime?> GetMaxCycleBlastEndAsync()
@@ -675,7 +683,7 @@ public class DatabaseService
             SELECT @request_id, c.cycle_number, i.impeller_number, AVG(h.value_num)
             FROM UNNEST(@cycle_numbers, @blast_starts, @blast_ends)
                 AS c(cycle_number, blast_start, blast_end)
-            CROSS JOIN generate_series(1, @impeller_count) AS i(impeller_number)
+            CROSS JOIN unnest(@impellers) AS i(impeller_number)
             LEFT JOIN plc_historical_data h
                 ON h.parameter_name = 'Current_imp_' || i.impeller_number
                AND h.timestamp > c.blast_start AND h.timestamp <= c.blast_end
@@ -693,7 +701,7 @@ public class DatabaseService
             cmd.Parameters.Add(new NpgsqlParameter("cycle_numbers", NpgsqlDbType.Array | NpgsqlDbType.Integer)  { Value = cycleNumbers });
             cmd.Parameters.Add(new NpgsqlParameter("blast_starts",  NpgsqlDbType.Array | NpgsqlDbType.Timestamp) { Value = blastStarts });
             cmd.Parameters.Add(new NpgsqlParameter("blast_ends",    NpgsqlDbType.Array | NpgsqlDbType.Timestamp) { Value = blastEnds });
-            cmd.Parameters.AddWithValue("impeller_count", _impellerCount);
+            cmd.Parameters.Add(new NpgsqlParameter("impellers", NpgsqlDbType.Array | NpgsqlDbType.Integer) { Value = _impellers.Snapshot() });
             await cmd.ExecuteNonQueryAsync();
         }, $"InsertFilteredAmpsData request={requestId} cycles={cycles.Count}");
     }
@@ -1243,6 +1251,81 @@ public class DatabaseService
                 result = Convert.ToDateTime(scalar);
         }, "GetGatewayLastScanAt");
         return result;
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // GATEWAY SETTINGS: impeller selection (gateway_settings.selected_impellers)
+    // ════════════════════════════════════════════════════════════════════════
+
+    // The saved selection, or null when there is no row. Not routed through RetryAsync: it runs
+    // once at startup, and five backed-off retries against a database the migration has not reached
+    // yet would only delay the gateway before it falls back to every impeller anyway.
+    public async Task<int[]?> GetImpellerSelectionAsync()
+    {
+        await using var conn = new NpgsqlConnection(_connectionString);
+        await conn.OpenAsync();
+        await using var cmd = new NpgsqlCommand(
+            "SELECT selected_impellers FROM gateway_settings WHERE id = 1", conn);
+        return await cmd.ExecuteScalarAsync() is short[] saved
+            ? saved.Select(i => (int)i).ToArray()
+            : null;
+    }
+
+    // Saves a new impeller selection and brings every stored energy figure into line with it, in
+    // ONE transaction, so no reader ever sees recalculated cycles beside an old total:
+    //   1. gateway_settings.selected_impellers
+    //   2. plc_cycles.energy_kwh for EVERY recorded cycle, from the Tier 2 current samples
+    //   3. plc_daily_trends.energy_kwh per day, so the all-time energy graphs follow
+    //   4. plc_aggregation_state.energy_total over the cycles the incremental engine has folded
+    // Tier 2 is only read; derived columns are overwritten and no row is deleted.
+    //
+    // Not routed through RetryAsync either — it logs and swallows a final failure, and the
+    // dashboard must be told when a save did not happen. Call only under CalculationService's
+    // Section 1 lock (ApplyImpellerSelectionAsync): step 4 would otherwise race the aggregation pass.
+    public async Task SaveImpellerSelectionAsync(int[] impellers, string? updatedBy)
+    {
+        string[] steps =
+        {
+            @"INSERT INTO gateway_settings (id, selected_impellers, updated_at, updated_by)
+              VALUES (1, @impellers::smallint[], NOW(), @updated_by)
+              ON CONFLICT (id) DO UPDATE SET
+                  selected_impellers = EXCLUDED.selected_impellers,
+                  updated_at         = EXCLUDED.updated_at,
+                  updated_by         = EXCLUDED.updated_by",
+
+            $@"UPDATE plc_cycles c
+               SET energy_kwh = {EnergyKwhExpr("c.blast_start", "c.blast_end", "(c.duration_sec / 3600.0)")}",
+
+            // The same per-day sum the rollup itself takes (UpsertDailyTrendsAsync, the cyc CTE).
+            @"UPDATE plc_daily_trends d
+              SET energy_kwh = ROUND(COALESCE((SELECT SUM(COALESCE(c.energy_kwh, 0))
+                                               FROM plc_cycles c
+                                               WHERE c.blast_end::date = d.day), 0), 6),
+                  updated_at = NOW()",
+
+            @"UPDATE plc_aggregation_state s
+              SET energy_total = (SELECT ROUND(COALESCE(SUM(c.energy_kwh), 0), 6)
+                                  FROM plc_cycles c
+                                  WHERE c.cycle_number <= s.last_cycle_number)
+              WHERE s.id = 1",
+        };
+
+        await using var conn = new NpgsqlConnection(_connectionString);
+        await conn.OpenAsync();
+        await using var tx = await conn.BeginTransactionAsync();
+
+        foreach (var sql in steps)
+        {
+            // Step 2 re-reads the current samples of every recorded cycle, so allow it time.
+            await using var cmd = new NpgsqlCommand(sql, conn, tx) { CommandTimeout = 600 };
+            cmd.Parameters.Add(new NpgsqlParameter("impellers", NpgsqlDbType.Array | NpgsqlDbType.Integer) { Value = impellers });
+            cmd.Parameters.AddWithValue("updated_by", (object?)updatedBy ?? DBNull.Value);
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        await tx.CommitAsync();
+        _logger.LogInformation("Impeller selection saved ({imps}) by {user}; cycle energy recalculated.",
+            string.Join(",", impellers), updatedBy ?? "unknown");
     }
 
     /// <summary>

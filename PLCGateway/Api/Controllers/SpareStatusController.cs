@@ -19,7 +19,7 @@ public class SpareStatusController : ControllerBase
     }
 
     /// <summary>
-    /// Returns all 140 rows from plc_spare_status (10 impellers Ã— 14 spares each).
+    /// Returns the plc_spare_status rows for the selected impellers (up to 10 impellers × 14 spares).
     /// Poll every 10 seconds.
     /// </summary>
     [HttpGet]

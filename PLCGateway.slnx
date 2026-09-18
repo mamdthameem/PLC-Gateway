@@ -1,4 +1,3 @@
 <Solution>
   <Project Path="PLCGateway/PLCGateway.csproj" />
-  <Project Path="PLCGateway.DemoSeeder/PLCGateway.DemoSeeder.csproj" />
 </Solution>

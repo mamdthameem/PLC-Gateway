@@ -7,6 +7,8 @@ import BarChartIcon from '@mui/icons-material/BarChart';
 import CloseIcon from '@mui/icons-material/Close';
 import { fetchAmpReadings, fetchLastCycleAmps } from '../services/ampsService';
 import AmpsGraph from './AmpsGraph';
+import ImpellerSelector from './ImpellerSelector';
+import { IMPELLER_SELECTION_CHANGED } from '../services/settingsService';
 import { usePlcConnection } from '../utils/usePlcConnection';
 import type { AmpReading } from '../types';
 
@@ -53,12 +55,18 @@ export default function AmpsPanel() {
     }
     load();
     const id = setInterval(load, POLL_MS);
-    return () => { active = false; clearInterval(id); };
+    // A saved impeller selection changes which tiles exist; reload now rather than on the next tick.
+    window.addEventListener(IMPELLER_SELECTION_CHANGED, load);
+    return () => {
+      active = false;
+      clearInterval(id);
+      window.removeEventListener(IMPELLER_SELECTION_CHANGED, load);
+    };
   }, []);
 
   // The figure each impeller last RAN at. Between cycles the live reading is a correct 0 A, which
-  // tells a reader nothing about the machine — so every tile also carries this, and a stopped
-  // impeller shows it as the headline with the live zero underneath.
+  // tells a reader nothing about the machine — so every idle tile also carries this underneath
+  // the live zero.
   useEffect(() => {
     let active = true;
     async function load() {
@@ -77,7 +85,12 @@ export default function AmpsPanel() {
     }
     load();
     const id = setInterval(load, LAST_CYCLE_POLL_MS);
-    return () => { active = false; clearInterval(id); };
+    window.addEventListener(IMPELLER_SELECTION_CHANGED, load);
+    return () => {
+      active = false;
+      clearInterval(id);
+      window.removeEventListener(IMPELLER_SELECTION_CHANGED, load);
+    };
   }, []);
 
   if (loading) return <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}><CircularProgress /></Box>;
@@ -87,7 +100,17 @@ export default function AmpsPanel() {
 
   return (
     <Box>
-      <Typography variant="h6" mb={connected ? 2 : 0.5}>Impeller Current</Typography>
+      {/* The selector sits here, but the choice is machine-wide: it decides which impellers every
+          panel shows and which ones energy and spare monitoring count. */}
+      <Box
+        sx={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          flexWrap: 'wrap', gap: 1, mb: connected ? 2 : 0.5,
+        }}
+      >
+        <Typography variant="h6">Impeller Current</Typography>
+        <ImpellerSelector />
+      </Box>
 
       {!connected && (
         <Alert severity="warning" sx={{ mb: 2, py: 0.25 }}>
@@ -121,11 +144,10 @@ export default function AmpsPanel() {
           const avg     = lastCycle[r.parameterName];
           const running = isFinite(amps) && amps >= RUNNING_THRESHOLD_A;
 
-          // The headline is ALWAYS the live reading, including the 0 A of an idle machine. It
-          // briefly showed the last cycle's average instead, from when the demo dataset ended at a
-          // permanent shutdown and ten zeroes were all anyone saw. With the machine actually
-          // cycling that would misreport a stopped impeller as drawing 19 A. The average moved to
-          // the line underneath, where it is context for a zero rather than a substitute for it.
+          // The headline is ALWAYS the live reading, including the 0 A of an idle machine. Putting
+          // the last cycle's average there instead would misreport a stopped impeller as drawing
+          // current, so the average sits on the line underneath — context for a zero, not a
+          // substitute for it.
           const headline = isFinite(amps) ? amps.toFixed(2) : r.value;
           return (
             <Box key={r.parameterName}>

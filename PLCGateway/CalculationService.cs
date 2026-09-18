@@ -10,6 +10,13 @@ public class CalculationService
 {
     private readonly DatabaseService _db;
     private readonly ILogger<CalculationService> _logger;
+    private readonly ImpellerSelection _impellers;
+
+    // Serialises everything that writes the Section 1 energy figures: the aggregation pass, the
+    // daily-rollup refresh and an impeller-selection change. A pass that loaded
+    // plc_aggregation_state before a recalculation committed would otherwise save the OLD energy
+    // total straight back over the new one, and a rollup refresh would do the same to a day.
+    private readonly SemaphoreSlim _section1Lock = new(1, 1);
 
     private const string TAG_BLAST       = "Blast ON/OFF";
     private const string TAG_MACHINE_ST  = "Machine status";
@@ -25,10 +32,12 @@ public class CalculationService
     public CalculationService(
         DatabaseService db,
         ILogger<CalculationService> logger,
+        ImpellerSelection impellers,
         IConfiguration configuration)
     {
-        _db     = db;
-        _logger = logger;
+        _db        = db;
+        _logger    = logger;
+        _impellers = impellers;
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -42,6 +51,37 @@ public class CalculationService
     // ════════════════════════════════════════════════════════════════════════
 
     public async Task ComputeLifetimeParametersAsync()
+    {
+        await _section1Lock.WaitAsync();
+        try
+        {
+            await ComputeLifetimeParametersCoreAsync();
+        }
+        finally
+        {
+            _section1Lock.Release();
+        }
+    }
+
+    // Refreshes yesterday + today in the plc_daily_trends rollup, under the Section 1 lock for the
+    // same reason as the pass itself: an upsert that read plc_cycles just before a recalculation
+    // committed would write the old energy back over the recalculated day.
+    public async Task RefreshRecentDailyTrendsAsync()
+    {
+        await _section1Lock.WaitAsync();
+        try
+        {
+            var today = DateTime.Now.Date;
+            await _db.UpsertDailyTrendsAsync(today.AddDays(-1), today.AddDays(1));
+        }
+        finally
+        {
+            _section1Lock.Release();
+        }
+    }
+
+    // Caller must hold _section1Lock.
+    private async Task ComputeLifetimeParametersCoreAsync()
     {
         try
         {
@@ -132,6 +172,41 @@ public class CalculationService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error in ComputeLifetimeParametersAsync");
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // IMPELLER SELECTION — which impellers the calculations count
+    //
+    // Saving a selection recalculates the energy of every recorded cycle, the daily rollup and the
+    // running total (DatabaseService.SaveImpellerSelectionAsync), then re-emits the lifetime
+    // parameters so the tiles move at once. The in-memory selection changes FIRST, so a cycle that
+    // closes while the recalculation runs is already counted with the new impellers; a failed save
+    // puts the previous selection back and rethrows, so the caller can report it.
+    // ════════════════════════════════════════════════════════════════════════
+
+    public async Task ApplyImpellerSelectionAsync(IEnumerable<int> selected, string? updatedBy)
+    {
+        await _section1Lock.WaitAsync();
+        try
+        {
+            var previous = _impellers.Snapshot();
+            _impellers.Set(selected);
+            try
+            {
+                await _db.SaveImpellerSelectionAsync(_impellers.Snapshot(), updatedBy);
+            }
+            catch
+            {
+                _impellers.Set(previous);
+                throw;
+            }
+
+            await ComputeLifetimeParametersCoreAsync();
+        }
+        finally
+        {
+            _section1Lock.Release();
         }
     }
 

@@ -61,6 +61,13 @@ export interface SpareStatus {
   lastUpdatedAt: string;
 }
 
+// gateway_settings — which impellers the site includes. Machine-wide: it decides which impellers
+// every panel shows AND which ones energy, the Section 2 current split and spare monitoring count.
+export interface ImpellerSelection {
+  selected: number[];
+  maxImpellers: number;
+}
+
 // Historical time-series (plc_historical_data)
 export interface HistoricalPoint {
   value: string;

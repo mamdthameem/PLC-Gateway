@@ -26,6 +26,7 @@ public class AdminController : ControllerBase
     private readonly ITrendsService _trends;
     private readonly DatabaseService _db;
     private readonly CalculationService _calculation;
+    private readonly ImpellerSelection _impellers;
 
     public AdminController(
         IConfiguration config,
@@ -38,7 +39,8 @@ public class AdminController : ControllerBase
         IFilterService filter,
         ITrendsService trends,
         DatabaseService db,
-        CalculationService calculation)
+        CalculationService calculation,
+        ImpellerSelection impellers)
     {
         _connectionString = config.GetValue<string>("PostgreSQL:ConnectionString")
             ?? config.GetConnectionString("PostgresDb")
@@ -53,6 +55,7 @@ public class AdminController : ControllerBase
         _trends = trends;
         _db = db;
         _calculation = calculation;
+        _impellers = impellers;
     }
 
     // DB timestamps are wall-clock local time (TIMESTAMP without tz, written via DateTime.Now).
@@ -200,6 +203,9 @@ public class AdminController : ControllerBase
                     refillTimestamp = ToUtc(s.RefillTimestamp),
                     blastCount      = s.BlastCount
                 }),
+                // The site's impeller selection (gateway_settings): amps, spareGrid and spareAlerts
+                // hold only these impellers, and every energy figure counts only these.
+                impellers = new { selected = _impellers.Snapshot() },
                 amps = amps.Select(a => new
                 {
                     parameterName = a.ParameterName,

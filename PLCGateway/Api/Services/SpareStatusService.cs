@@ -6,14 +6,14 @@ namespace PlcApi.Services;
 public class SpareStatusService : ISpareStatusService
 {
     private readonly string _connectionString;
-    private readonly int _impellerCount;
+    private readonly ImpellerSelection _impellers;
     private readonly ILogger<SpareStatusService> _logger;
 
-    public SpareStatusService(IConfiguration config, ILogger<SpareStatusService> logger)
+    public SpareStatusService(IConfiguration config, ImpellerSelection impellers, ILogger<SpareStatusService> logger)
     {
         _connectionString = config.GetConnectionString("PostgresDb")
             ?? throw new InvalidOperationException("PostgresDb connection string is required.");
-        _impellerCount = Math.Clamp(config.GetValue("Impellers:Count", 10), 1, 10);
+        _impellers = impellers;
         _logger = logger;
     }
 
@@ -35,13 +35,12 @@ public class SpareStatusService : ISpareStatusService
             await using var conn = new NpgsqlConnection(_connectionString);
             await conn.OpenAsync();
 
-            // Every query is scoped to the impellers this machine actually has. Rows for higher
-            // impeller numbers may still exist (a dataset seeded for a 10-impeller machine, say);
-            // they are filtered out rather than deleted, so nothing is destroyed by running a
-            // smaller rig against an existing database.
+            // Every query is scoped to the selected impellers (gateway_settings). A deselected
+            // impeller's rows stay in the table — filtered out here, never deleted — so selecting
+            // it again brings them back unchanged.
             var whereClause = alertsOnly == true
-                ? "WHERE impeller_num <= @imp AND trigger_active = TRUE AND threshold_hours > 0"
-                : "WHERE impeller_num <= @imp";
+                ? "WHERE impeller_num = ANY(@imps) AND trigger_active = TRUE AND threshold_hours > 0"
+                : "WHERE impeller_num = ANY(@imps)";
 
             var sql = $@"
                 SELECT impeller_num, spare_index, spare_name, threshold_hours,
@@ -51,7 +50,7 @@ public class SpareStatusService : ISpareStatusService
                 ORDER BY impeller_num, spare_index;";
 
             await using var cmd = new NpgsqlCommand(sql, conn);
-            cmd.Parameters.AddWithValue("imp", _impellerCount);
+            cmd.Parameters.AddWithValue("imps", _impellers.Snapshot());
             await using var reader = await cmd.ExecuteReaderAsync();
 
             while (await reader.ReadAsync())

@@ -143,7 +143,7 @@ filter.
 | `AggregationService` | 1 minute | Computes all lifetime parameters → `plc_lifetime_parameters` + `plc_shots_breakdown`, then refreshes `plc_daily_trends` for yesterday+today only (bounded work per pass) |
 | `CycleTrackingService` | 2 seconds | Detects blast cycle end (falling edge on Blast ON/OFF), writes `plc_cycles` |
 | `FilteredCalculationService` | 5 seconds | Polls `calculation_requests`, computes **only the parameters the request selected** (aggregate + per-cycle + per-item production + impeller current) |
-| `SpareMonitoringService` | 10 seconds | Reads 140 spare trigger/run-hour/replaced tags, updates `plc_spare_status` |
+| `SpareMonitoringService` | 10 seconds | Reads spare trigger/run-hour/replaced tags for the selected impellers (140 with all ten), updates `plc_spare_status` |
 
 ---
 
@@ -255,7 +255,7 @@ One row per cycle per request.
 | `metal_1_name` … `metal_4_name` | TEXT | |
 | `metal_1_weight_kg` … `metal_4_weight_kg` | NUMERIC | |
 | `production_kg` | NUMERIC | Tonnage delta vs previous cycle |
-| `energy_kwh` | NUMERIC | avg amps × duration hours across all 10 impellers |
+| `energy_kwh` | NUMERIC | avg amps × duration hours across the selected impellers |
 | `calculated_at` | TIMESTAMP | |
 
 ### `plc_filtered_shots_breakdown` — **retired, no longer written**
@@ -319,7 +319,7 @@ Dashboard alert condition: `trigger_active = TRUE AND threshold_hours > 0`
 | `machine_status` | `Machine status ≠ 0 → 1`, else `0` | `plc_current_values` address `DB60.DBB0`, live |
 | `machine_utility_pct` | `blast_time_sec ÷ machine_on_time_sec × 100` | `Blast ON/OFF`, `Machine status` from Tier 2 |
 | `production_qty_kg` | Latest raw value of `Tonnage` tag | `plc_current_values` — PLC is a running accumulator |
-| `energy_kwh_total` | `Σ (avg_amps_per_impeller × cycle_duration_hours)` across all 10 impellers × all cycles | `plc_cycles` for boundaries; Tier 2 `Current_imp_1`…`10` for COV readings per cycle |
+| `energy_kwh_total` | `Σ (avg_amps_per_impeller × cycle_duration_hours)` across the selected impellers (`gateway_settings`) × all cycles | `plc_cycles` for boundaries; Tier 2 `Current_imp_N` for COV readings per cycle |
 | `energy_per_casting_kwh_kg` | `energy_kwh_total ÷ production_qty_kg` | Derived |
 | `blast_time_sec` | Total seconds where `Blast ON/OFF = true` | Tier 2 state transitions |
 | `cycle_count` | Rising edges `0→1` on `Blast ON/OFF` | Tier 2 |
@@ -705,8 +705,9 @@ port-forwarding, config placeholders) is in **`DEPLOYMENT-NOTES.md`**.
 | `GET /api/machinestatus` | Machine status byte + `isStale` / `plcConnected` / `lastScanAt` |
 | `GET /api/lifetime` | Section 1 scalar parameters |
 | `GET /api/shotsbreakdown` | Section 1 shots-per-refill table |
-| `GET /api/amps` | Live current for the 10 impellers |
-| `GET /api/sparestatus` · `/alerts` | Spare grid (140 rows) · triggered subset |
+| `GET /api/amps` | Live current for the selected impellers |
+| `GET /api/sparestatus` · `/alerts` | Spare grid (14 rows per selected impeller) · triggered subset |
+| `GET` · `PUT /api/settings/impellers` | The impeller selection (`gateway_settings`): which impellers every panel shows **and** every energy / spare calculation counts. Any signed-in user may `PUT { "selected": [1, 2] }`; the save recalculates `plc_cycles.energy_kwh`, the daily rollup and the lifetime energy totals before it returns. Raw readings are recorded for all 10 impellers regardless |
 | `GET /api/trends` | **Graph series.** `bucket=auto` (default) picks the granularity from the span of history that exists and reports it in the `X-Trend-Bucket` response header; `day`/`month` read the `plc_daily_trends` rollup; omit `start`/`end` for all-time. `bucket=hour` is computed live from Tier 2 and requires both bounds. **Every series is gap-filled** — a bucket with no underlying rows comes back as zeros, never omitted, so equal spacing on a chart means equal elapsed time. |
 | `GET /api/historical?name=&start=&end=` | Raw Tier 2 points for one tag (used by the per-impeller amps trace) |
 | `GET /api/cycles/latest` | Most recent completed cycle |

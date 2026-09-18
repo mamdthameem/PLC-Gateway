@@ -8,19 +8,16 @@ public class AmpsService : IAmpsService
     private readonly string _connectionString;
     private readonly ILogger<AmpsService> _logger;
 
-    // How many impellers this machine has (Impellers:Count, default 10). The expo rig runs 2, so
-    // this cannot be a fixed list: the panel, the spare grid and the Section 2 split all size
-    // themselves from what the API returns.
-    private readonly string[] _impellerNames;
+    // Only the selected impellers (gateway_settings) are returned. The panel sizes itself from what
+    // the API returns, so a deselected impeller's tile simply disappears.
+    private readonly ImpellerSelection _impellers;
 
-    public AmpsService(IConfiguration config, ILogger<AmpsService> logger)
+    public AmpsService(IConfiguration config, ImpellerSelection impellers, ILogger<AmpsService> logger)
     {
         _connectionString = config.GetConnectionString("PostgresDb")
             ?? throw new InvalidOperationException("PostgresDb connection string is required.");
+        _impellers = impellers;
         _logger = logger;
-
-        int count = Math.Clamp(config.GetValue("Impellers:Count", 10), 1, 10);
-        _impellerNames = Enumerable.Range(1, count).Select(i => $"Current_imp_{i}").ToArray();
     }
 
     public async Task<List<AmpReadingDto>> GetImpellerAmpsAsync()
@@ -40,7 +37,7 @@ public class AmpsService : IAmpsService
                 ORDER BY substring(parameter_name from '[0-9]+$')::int;";
 
             await using var cmd = new NpgsqlCommand(sql, conn);
-            cmd.Parameters.AddWithValue("names", _impellerNames);
+            cmd.Parameters.AddWithValue("names", _impellers.CurrentTagNames());
             await using var reader = await cmd.ExecuteReaderAsync();
 
             while (await reader.ReadAsync())
@@ -88,7 +85,7 @@ public class AmpsService : IAmpsService
                 ORDER BY substring(h.parameter_name from '[0-9]+$')::int;";
 
             await using var cmd = new NpgsqlCommand(sql, conn);
-            cmd.Parameters.AddWithValue("names", _impellerNames);
+            cmd.Parameters.AddWithValue("names", _impellers.CurrentTagNames());
             await using var reader = await cmd.ExecuteReaderAsync();
 
             while (await reader.ReadAsync())

@@ -7,8 +7,8 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 /// <summary>
-/// Polls plc_current_values every 10 seconds for all 140 spare tags
-/// (10 impellers × 14 spares each) and keeps plc_spare_status up to date.
+/// Polls plc_current_values every 10 seconds for the spare tags of the selected impellers
+/// (up to 10 impellers × 14 spares each) and keeps plc_spare_status up to date.
 ///
 /// For each spare it reads:
 ///   - Spares trigger impN[M]  — BOOL flag set by PLC when run hours threshold reached
@@ -27,10 +27,11 @@ public class SpareMonitoringService : BackgroundService
     private readonly string[] _spareNames;
     private readonly double[] _spareThresholds;
 
-    // Impellers:Count, default 10. The expo rig has 2, and monitoring spares for impellers that
-    // are not on the machine would fill plc_spare_status with rows nothing can ever satisfy.
-    private readonly int ImpellerCount;
-    private const int SpareCount    = 14;
+    // Only the selected impellers (gateway_settings) are monitored. A deselected impeller's rows
+    // stay in plc_spare_status untouched — filtered out of the API, never deleted — so selecting
+    // it again picks up where it left off.
+    private readonly ImpellerSelection _impellers;
+    private const int SpareCount = 14;
 
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(10);
 
@@ -41,22 +42,23 @@ public class SpareMonitoringService : BackgroundService
         ILogger<SpareMonitoringService> logger,
         DatabaseService db,
         IConfiguration configuration,
-        PlcConnectionState connState)
+        PlcConnectionState connState,
+        ImpellerSelection impellers)
     {
         _logger          = logger;
         _db              = db;
         _connState       = connState;
+        _impellers       = impellers;
         _spareNames      = configuration.GetSection("MaintenanceThresholds:SpareNames").Get<string[]>()
                            ?? Array.Empty<string>();
         _spareThresholds = configuration.GetSection("MaintenanceThresholds:SpareLifeBlastHours").Get<double[]>()
                            ?? Array.Empty<double>();
-        ImpellerCount    = Math.Clamp(configuration.GetValue("Impellers:Count", 10), 1, 10);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("SpareMonitoringService starting ({imp} impellers × {sp} spares).",
-            ImpellerCount, SpareCount);
+        _logger.LogInformation("SpareMonitoringService starting (impellers {imp} × {sp} spares).",
+            string.Join(",", _impellers.Snapshot()), SpareCount);
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -70,7 +72,7 @@ public class SpareMonitoringService : BackgroundService
 
             try
             {
-                for (int imp = 1; imp <= ImpellerCount; imp++)
+                foreach (int imp in _impellers.Snapshot())
                 {
                     for (int idx = 0; idx < SpareCount; idx++)
                     {

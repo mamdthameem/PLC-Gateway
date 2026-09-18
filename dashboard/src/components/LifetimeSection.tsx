@@ -11,6 +11,7 @@ import UtilityGraph from './UtilityGraph';
 import ProductionGraph from './ProductionGraph';
 import TrendMetricGraph from './TrendMetricGraph';
 import { byParamOrder } from '../utils/unitConverters';
+import { IMPELLER_SELECTION_CHANGED } from '../services/settingsService';
 import type { LifetimeParameter, ShotsBreakdownEntry } from '../types';
 
 const POLL_INTERVAL_MS = 60_000;
@@ -104,7 +105,12 @@ export const LifetimeSection: React.FC<Props> = ({ include, title, subtitle, sho
   useEffect(() => {
     load();
     const timer = setInterval(load, POLL_INTERVAL_MS);
-    return () => clearInterval(timer);
+    // A saved impeller selection recalculates the energy totals; show them now, not in up to 60 s.
+    window.addEventListener(IMPELLER_SELECTION_CHANGED, load);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener(IMPELLER_SELECTION_CHANGED, load);
+    };
   }, [load]);
 
   // machine_status is excluded even when it is in `include` — MachineStatusTile renders it above

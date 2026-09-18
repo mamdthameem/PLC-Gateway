@@ -34,14 +34,15 @@ export default function MachineStatusTile() {
   // disconnected gateway is indistinguishable from a genuinely idle machine.
   const disconnected = status !== null && !status.plcConnected;
 
-  // A powered, reachable machine that is not blasting is IDLE — it is between loads, which is a
-  // normal operating state and most of any shift. STOPPED is reserved for the case where the
-  // gateway cannot reach the PLC, where the zero is inferred rather than measured. Collapsing the
-  // two would have a healthy machine between cycles reading the same as a dead link.
+  // A powered, reachable machine that is not blasting shows as LOADING — that is what the plant is
+  // actually doing between blasts, and it is a normal operating state covering most of any shift.
+  // STOPPED stays reserved for the case where the gateway cannot reach the PLC and the zero is
+  // inferred rather than measured; collapsing the two would have a healthy machine between cycles
+  // reading the same as a dead link. Only the wording changed — the three states are unchanged.
   const label = value === null
     ? '—'
     : running ? 'Running'
-    : disconnected ? 'Stopped' : 'Idle';
+    : disconnected ? 'Stopped' : 'Loading';
 
   return (
     <Paper sx={{ p: 2.5, borderRadius: 2, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
