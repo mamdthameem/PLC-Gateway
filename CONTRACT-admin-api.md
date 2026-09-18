@@ -17,15 +17,20 @@ Any change to that controller must update this file and `sample-response.json` i
 | `GET` | `/api/admin/live` | Full live snapshot — Section 1 + last completed Section 2 |
 | `GET` | `/api/admin/trends` | Whole-history graph series for the 4 graphable lifetime parameters |
 | `POST` | `/api/admin/filter` | Trigger a Section 2 filtered calculation synchronously, get the full result back in one response |
-| `GET` | `/api/admin/history` | Per-tag raw Tier 2 pulls (row-capped, paged) — see "Not covered here" |
+| `GET` | `/api/admin/history` | Raw recorded readings of one tag, oldest first, in pages |
+
+The gateway also makes one call the other way, to the cloud — the licence check. The cloud must
+provide that endpoint; see "Licence check" near the end.
 
 ## Transport and authentication (all endpoints)
 
 | Item | Value |
 | --- | --- |
 | Transport | HTTPS only (IIS binding, port 443) |
-| Auth | Header `X-Api-Key` must equal `Admin:ApiKey` (appsettings). No IP allowlist — the cloud caller (Firebase Cloud Functions) has no fixed egress IP, so key-over-HTTPS is the whole model. |
-| Failed key | `403 {"error":"forbidden"}` |
+| Auth | Header `X-Api-Key` must equal `Admin:ApiKey` (set in the gateway's `appsettings.Production.json`). No IP allowlist — the cloud caller (Firebase Cloud Functions) has no fixed egress IP, so key-over-HTTPS is the whole model. Store the key in the cloud's secret store, never in code |
+| Key rules | At least 32 characters. The `REPLACE_WITH…` placeholder shipped in `appsettings.json` is never accepted: until a real key is set, **every** request gets `403`. The comparison is constant-time |
+| Failed key | `403 {"error":"forbidden"}` — no header, a wrong key, a key in the query string, or two `X-Api-Key` headers |
+| Licence lock | `/api/admin/*` is never locked by the licence check, so the cloud keeps receiving data while a client's dashboard is locked |
 | Server failure | `500 {"error":"<endpoint-specific message>"}` |
 | Success | `200`, `Content-Type: application/json; charset=utf-8` |
 
@@ -38,6 +43,8 @@ No JWT is involved on any `/api/admin/*` endpoint (JWT protects the local dashbo
   not assume a fixed digit count.
 - Storage is gateway-local wall time; the endpoint converts to UTC using the gateway server's
   timezone at response time.
+- **One exception: `/api/admin/history`** takes and returns gateway-local time with no `Z`. See that
+  section.
 - Fields that can be `null` are marked *nullable* below. Non-nullable timestamps are always present.
 
 ## Value-string convention
@@ -84,7 +91,7 @@ Render as delivered. Parse to number only for formatting/plotting — never for 
 | `machineStatus` | object, nullable | Running/stopped tile (null only before the first-ever PLC scan) |
 | `lifetime` | array | Section 1 lifetime parameters (all-time KPIs) |
 | `shotsBreakdown` | array | Section 1 shots-per-refill table (chart data) |
-| `impellers` | object | `{ "selected": [1, 2, …] }` — the site's impeller selection (`gateway_settings`), ascending integers 1–10. `amps`, `spareGrid` and `spareAlerts` hold **only** these impellers, and every energy figure (lifetime, trends, Section 2) counts only these. Added 2026-09-15; additive |
+| `impellers` | object | `{ "selected": [1, 2, …] }` — the site's impeller selection (`gateway_settings`), ascending integers 1–10. `amps`, `spareGrid` and `spareAlerts` hold **only** these impellers, and every energy figure (lifetime, trends, Section 2) counts only these. **So when impellers are hidden these lists get shorter**: with 9 selected, `amps` has 9 entries and `spareGrid` 126 rows (9 × 14). Build the display from the arrays, never from a fixed count of 10. Added 2026-09-15; additive |
 | `amps` | array | Live current per **selected** impeller — one entry each, up to 10 |
 | `spareGrid` | array | Spare-health grid, 14 entries per **selected** impeller (140 with all ten) |
 | `spareAlerts` | array | Subset of `spareGrid` where `triggerActive` is true and `thresholdHours > 0` |
@@ -155,9 +162,11 @@ Ordered by `refillTimestamp` ascending. Blast count between consecutive shot ref
 
 ## `amps[]`
 
-One entry per selected impeller (see `impellers`), up to 10 — do not assume ten. **Ordered lexicographically by `parameterName`**, i.e.
-`Current_imp_1`, `Current_imp_10`, `Current_imp_2`, … `Current_imp_9` — sort client-side by the
-numeric suffix if you need 1…10 display order.
+One entry per selected impeller (see `impellers`), up to 10 — do not assume ten. **Ordered by
+impeller number**: `Current_imp_1`, `Current_imp_2`, … `Current_imp_10`, skipping hidden impellers
+(e.g. `…_6`, `…_8` when 7 is hidden). The gateway sorts on the number at the end of the name, so no
+client-side sorting is needed. (Earlier versions of this document said the order was by text —
+`1, 10, 2, …` — which was wrong.)
 
 | Field | JSON type | Description |
 | --- | --- | --- |
@@ -374,15 +383,90 @@ against real scale.
 
 ---
 
+# `GET /api/admin/history`
+
+Raw recorded readings of **one tag** from `plc_historical_data`, oldest first, in pages. Use it for
+detail the other endpoints do not carry, such as one tag's readings across a day. These are raw tag
+readings, not calculated parameters.
+
+| Item | Value |
+| --- | --- |
+| Method / path | `GET /api/admin/history` |
+| `metric` | **Required.** The tag name exactly as recorded, e.g. `Tonnage`, `Blast ON/OFF`, `Current_imp_3`. URL-encode spaces and `/` |
+| `from`, `to` | ISO 8601, e.g. `2026-05-01T00:00:00`. **Gateway-local time, not UTC** (see below). Both ends are included. Always send both: a missing one defaults to year 1 and the result is empty |
+| `limit` | Rows per page. Default `5000`; clamped to `1`…`20000` |
+| `offset` | Rows to skip. Default `0`. Page by adding `limit` to `offset` until `count < limit` |
+| Missing `metric` | `400` in ASP.NET's validation-problem shape — `{"title": "One or more validation errors occurred.", "status": 400, "errors": {"metric": ["The metric field is required."]}}` — **not** the `{"error": …}` shape used elsewhere |
+| Server failure | `500 {"error": "history query failed"}` |
+
+**Timestamps — the one exception to the UTC rule.** `from` and `to` are compared directly with the
+stored wall-clock times, and `from`, `to` and every `points[].timestamp` come back in the gateway
+server's local time with **no `Z`** (at this site India Standard Time, UTC+05:30 — subtract 5 h 30 min
+for UTC). Do not add a `Z` to these values.
+
+Response (real output, `metric=Tonnage&from=2026-05-01T00:00:00&to=2026-05-15T00:00:00&limit=2`):
+
+```json
+{
+  "metric": "Tonnage",
+  "from": "2026-05-01T00:00:00",
+  "to": "2026-05-15T00:00:00",
+  "count": 2,
+  "limit": 2,
+  "offset": 0,
+  "points": [
+    { "value": "0",    "timestamp": "2026-05-05T15:22:38.10097",  "reason": "PERIODIC" },
+    { "value": "4225", "timestamp": "2026-05-05T15:24:19.479489", "reason": "PERIODIC" }
+  ]
+}
+```
+
+| Field | JSON type | Description |
+| --- | --- | --- |
+| `metric`, `from`, `to`, `offset` | as sent | Echo of the request |
+| `limit` | number (integer) | The page size actually used, after clamping |
+| `count` | number (integer) | Rows in this page |
+| `points[].value` | string, nullable | The reading as text (value-string convention: numbers as decimal text, BOOL as `"1"`/`"0"`, STRING as-is) |
+| `points[].timestamp` | string | When the reading was stored — gateway-local time, no `Z` |
+| `points[].reason` | string | Why it was stored, e.g. `COV` / `STATE_CHANGE` (value changed), `PERIODIC` (60 s heartbeat), `BLAST_ON` (per-second current during a blast), `DISCONNECT` (forced OFF when the PLC link dropped) |
+
+---
+
+# Licence check (gateway → Shot Sense cloud)
+
+The one call in the other direction: the gateway asks the cloud whether its licence is valid. **The
+cloud must provide this endpoint.** Until it exists, leave the gateway's `License:CheckUrl` empty —
+the check is then off and the dashboard stays open.
+
+| Item | Value |
+| --- | --- |
+| Request | `GET <License:CheckUrl>` — the full URL, exactly as set on the gateway |
+| Header | `X-License-Key: <License:Key>` |
+| Body | None. The response body is ignored too — `{"valid": true}` is plenty |
+| Timeout | 20 seconds |
+| When | At gateway start, then every 60 minutes (`License:CheckIntervalMinutes`); every 5 minutes while locked |
+
+What the cloud answers, and what the gateway does:
+
+| Cloud answers | Gateway does |
+| --- | --- |
+| Any `2xx` | Licence valid. Dashboard open; the 72-hour grace clock restarts |
+| `401`, `402` or `403` | Key wrong, expired or revoked. **Dashboard locks at once** |
+| Anything else, or nothing (timeout, DNS failure, `404`, `5xx`) | Counted as "could not reach". The dashboard stays open until 72 hours (`License:GraceHours`) after the last `2xx`, then locks |
+
+Answer an unknown or revoked key with a real `401`/`403`. A `404` or `500` for a bad key would be read
+as "could not reach" and would give that client 72 more hours.
+
+A lock closes only the gateway's own dashboard. PLC recording and every calculation keep running, and
+`/api/admin/*` stays open, so the cloud keeps receiving data while a client is locked.
+
+---
+
 ## Sample
 
 `sample-response.json` (repo root) is a full `GET /api/admin/live` response in exactly the shape
-described above, with realistic dummy values — including all 140 `spareGrid` rows, the lexicographic
-`amps` ordering, and `section2.metals[]` — usable directly as a fixture in the cloud app with no
-live connection. It does not include sample responses for `/api/admin/trends` or
-`/api/admin/filter` — the field tables above are authoritative for those two.
-
-## Not covered here
-
-`GET /api/admin/history` (per-tag Tier 2 pulls, listed in the Endpoints table above for
-completeness) is unchanged in this pass and intentionally not detailed in this contract.
+described above, with realistic dummy values — including `impellers.selected`, all 140 `spareGrid`
+rows (all ten impellers selected), `amps` in impeller-number order, and `section2.metals[]` — usable
+directly as a fixture in the cloud app with no live connection. It does not include sample responses
+for `/api/admin/trends`, `/api/admin/filter` or `/api/admin/history` — the field tables above are
+authoritative for those.

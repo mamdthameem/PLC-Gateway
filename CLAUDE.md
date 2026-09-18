@@ -67,7 +67,7 @@ Industry project. A single **unified ASP.NET Core (.NET 10) application** hosted
 | `plc_aggregation_state`        | Backend                             | Single row — incremental Section 1 watermark + running totals          |
 | `plc_daily_trends`            | Backend writes, Dashboard reads      | **Derived** daily rollup (one row per day) powering the all-time graphs. Rebuildable; never a substitute for Tier 2 |
 | `gateway_status`               | Backend                             | Single row — PLC connection state (`plc_connected`, `last_scan_at`)    |
-| `gateway_license_state`        | Backend                             | Single row — last successful cloud license check                       |
+| `gateway_license_state`        | Backend                             | Single row — licence check state. `last_success_utc` (true UTC) + `last_success_url` = the grace anchor; `locked` mirrors the lock |
 | `gateway_settings`             | Backend (dashboard saves via API)   | Single row — `selected_impellers`: which impellers are shown AND counted in energy / spares. See "Impeller selection" |
 | `users`                        | Backend                             | Dashboard login accounts (local; no tenant/subscription)               |
 
@@ -87,7 +87,7 @@ Industry project. A single **unified ASP.NET Core (.NET 10) application** hosted
 | `CycleTrackingService`       | 2s         | Falling edge on `Blast ON/OFF` → reads Tier 1 for metal/tonnage → writes `plc_cycles` (with computed `production_kg`, `energy_kwh`) |
 | `FilteredCalculationService` | 5s poll    | Picks up pending `calculation_requests`, computes **only the parameters the request selected** + per-item production split |
 | `SpareMonitoringService`     | 10s        | Reads trigger/runhour/replaced tags for the **selected** impellers (140 with all ten) → upserts `plc_spare_status` (skips while PLC disconnected) |
-| `LicenseCheckService`        | 60 min     | Cloud license check with grace period; on expiry locks the data API/dashboard (recording continues) |
+| `LicenseCheckService`        | 60 min (5 min while locked) | Cloud licence check. 2xx = open; 401/402/403 = **lock at once**; no answer = open until 72 h after the last 2xx; empty `CheckUrl` = check off. Locks only the dashboard and its API — recording continues |
 | `CalculationService`         | shared lib | Math: `ComputeLifetimeParametersAsync` (incremental), `ComputeFilteredParametersAsync`      |
 | `PlcService`                 | —          | S7.NetPlus wrapper: batched `ReadRegion`; reserved `Write` for spares REPLACED write-back  |
 | API controllers + services   | HTTP       | `/api/*` JSON for the dashboard (JWT-protected); `/api/admin/*` cloud pulls (IP allowlist + API key) |
@@ -349,6 +349,9 @@ Thresholds (spare_index 0–13, hours): 100, 300, 300, 600, 2000, 2000, 300, 200
 | `PLCGateway/GatewayWorker.cs`              | Batched PLC scan loop + connection-state hooks                            |
 | `PLCGateway/PlcConnectionState.cs`         | Shared PLC connect/disconnect state                                       |
 | `PLCGateway/ImpellerSelection.cs`          | In-memory impeller selection (loaded from `gateway_settings`), read by every impeller-aware service |
+| `PLCGateway/SecretConfig.cs`               | Reads secrets; a `REPLACE_WITH…` placeholder or a too-short key counts as NOT SET. Also `JwtSigningKey` — one signing key shared by `AuthController` and JwtBearer |
+| `PLCGateway/appsettings.Production.json`   | **Git-ignored, never published.** This install's secrets (`Jwt:Key`, `Admin:ApiKey`, `License:*`). Loaded when the app runs as Production |
+| `tools/Set-DashboardPassword.ps1`          | Changes a dashboard password: asks twice without showing it, stores only the hash |
 | `PLCGateway/TagParser.cs`                  | Parses tags from raw DB byte regions (S7 big-endian)                      |
 | `PLCGateway/AggregationService.cs`         | Section 1 incremental computation trigger (1 min)                         |
 | `PLCGateway/CalculationService.cs`         | Parameter math — incremental Section 1 + Section 2 (+ metal split)        |
@@ -371,6 +374,7 @@ Thresholds (spare_index 0–13, hours): 100, 300, 300, 600, 2000, 2000, 300, 200
 | `dashboard/src/components/ItemProductionGraph.tsx` | Section 2 production tile's graph — declared weight per casting item (replaced the per-metal table) |
 | `dashboard/src/components/FilterBar.tsx`    | Filter mode tabs + per-parameter toggles (Select All / Clear All); stays usable while a filter is applied |
 | `dashboard/src/utils/usePlcConnection.ts`  | Shared PLC-link poll behind the amps + spares staleness banners            |
+| `dashboard/src/components/LicenseGate.tsx` | Swaps the dashboard for a lock screen while `GET /api/license` says locked; warns during the grace period |
 | `dashboard/src/components/ImpellerSelector.tsx` | Impeller number buttons + confirm dialog in the Live Impeller Current header. `services/settingsService.ts` fires `IMPELLER_SELECTION_CHANGED` after a save so the slow-polling panels reload at once |
 | `PLCGateway/Api/Middleware/*.cs`           | `AdminGuardMiddleware` (IP+key), `LicenseLockMiddleware` (402 when locked) |
 | `dashboard/`                               | **Dashboard source** (Vite + React + TS), vendored in-repo. `npm run build` emits into `PLCGateway/wwwroot` (same-origin). |
@@ -543,6 +547,36 @@ back to left.**
   (the backend forces the value to 0 and flags the row stale).
 
 Collapsing Loading into Stopped made a healthy machine between loads read identically to a dead link.
+
+---
+
+## Secrets, logins and the licence lock
+
+Set up 2026-09-18 so the gateway can face the internet (the cloud admin API, and testing through a
+Cloudflare quick tunnel — `DEPLOYMENT-NOTES.md` section 11).
+
+- **Secrets live in `appsettings.Production.json`** next to the app — git-ignored and excluded from
+  publish, so a republish never overwrites it. `appsettings.json` keeps only `REPLACE_WITH…`
+  placeholders. IIS runs as Production and loads it; locally use `dotnet run --no-launch-profile`.
+- **Placeholders are never keys** (`SecretConfig`). Before this, the public placeholder strings were
+  accepted as real keys. Now `Admin:ApiKey` missing, placeholder or under 32 characters ⇒ every
+  `/api/admin/*` request is 403; `Jwt:Key` the same ⇒ a random key per run (logins work but do not
+  survive a restart). The hard-coded fallback JWT key is gone. Both cases log a startup warning.
+- **Logins**: `tools/Set-DashboardPassword.ps1` changes a password. Hashes are still plain unsalted
+  SHA-256, and there is **no login-attempt limit** — offered and declined 2026-09-18. Revisit both
+  before the gateway gets a permanent public address.
+- **Licence rules (settled 2026-09-18)**: 2xx = valid; 401/402/403 = lock at once; anything else =
+  "unreachable", open until 72 h after the last 2xx; empty `CheckUrl` = check off, dashboard open,
+  and it never moves the grace clock. The grace anchor is stored with its URL (`last_success_url`),
+  so a success from another URL — or from the empty-URL era — never carries over. The lock is
+  HTTP-only: `LicenseLockMiddleware` answers 402 on the dashboard API (`/api/admin`, `/api/auth`,
+  `/api/license`, `/api/health` exempt) and `LicenseGate` shows the lock screen, while every hosted
+  service keeps recording (verified: a blast cycle was recorded while locked).
+- **Time-zone bug fixed**: licence times were written as UTC-marked values into `TIMESTAMP` columns,
+  so PostgreSQL stored them as local time, and they were read back as UTC — silently adding 5 h 30 min
+  of grace. They are now stored as true UTC wall-clock values.
+- **`/api/admin/history` takes and returns local time without `Z`** — the one exception to the
+  contract's UTC rule. Documented rather than changed, so existing callers keep working.
 
 ---
 

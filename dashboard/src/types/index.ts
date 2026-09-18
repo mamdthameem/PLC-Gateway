@@ -68,6 +68,14 @@ export interface ImpellerSelection {
   maxImpellers: number;
 }
 
+// GET /api/license — what the dashboard lock screen shows. See LicenseCheckService for the rules.
+export interface LicenseStatus {
+  locked: boolean;
+  reason: 'ok' | 'not_configured' | 'rejected' | 'unreachable' | 'not_checked';
+  /** Only while the licence server is not answering: when the dashboard will lock. */
+  lockAfterUtc: string | null;
+}
+
 // Historical time-series (plc_historical_data)
 export interface HistoricalPoint {
   value: string;

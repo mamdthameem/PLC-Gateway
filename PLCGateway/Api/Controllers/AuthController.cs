@@ -14,12 +14,14 @@ public class AuthController : ControllerBase
     private readonly IConfiguration _config;
     private readonly ILogger<AuthController> _logger;
     private readonly IUserService _users;
+    private readonly JwtSigningKey _signingKey;
 
-    public AuthController(IConfiguration config, ILogger<AuthController> logger, IUserService users)
+    public AuthController(IConfiguration config, ILogger<AuthController> logger, IUserService users, JwtSigningKey signingKey)
     {
-        _config = config;
-        _logger = logger;
-        _users  = users;
+        _config     = config;
+        _logger     = logger;
+        _users      = users;
+        _signingKey = signingKey;
     }
 
     // Anonymous: issues a JWT for a valid local dashboard user.
@@ -45,9 +47,7 @@ public class AuthController : ControllerBase
 
     private string GenerateJwtToken(string username, string role, string userId)
     {
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(
-            _config["Jwt:Key"] ?? "YourSuperSecretKeyWithAtLeast32Chars!!"));
-        var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+        var credentials = new SigningCredentials(_signingKey.SecurityKey, SecurityAlgorithms.HmacSha256);
 
         var claims = new[]
         {

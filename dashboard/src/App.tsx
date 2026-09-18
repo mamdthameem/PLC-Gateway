@@ -9,6 +9,7 @@ import { ProtectedRoute } from './components/ProtectedRoute';
 import { Login } from './components/Login';
 import { MachineDashboard } from './components/MachineDashboard';
 import { Sidebar, TopBar } from './components';
+import LicenseGate from './components/LicenseGate';
 import { BASE_PATH } from './services/apiBase';
 
 const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -28,7 +29,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       >
         <TopBar />
         <Box component="main" sx={{ p: 2, flexGrow: 1, backgroundColor: theme.palette.background.default }}>
-          {children}
+          <LicenseGate>{children}</LicenseGate>
         </Box>
       </Box>
     </Box>

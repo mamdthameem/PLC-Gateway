@@ -454,6 +454,12 @@ CREATE TABLE IF NOT EXISTS gateway_license_state (
 
 INSERT INTO gateway_license_state (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
 
+-- The licence server that last_success_utc belongs to. last_success_utc is the grace anchor: the
+-- last real "yes" from THIS server, or the first start with this URL. A success from another URL
+-- (or from a run with no URL, recorded before this column existed) starts a fresh grace window
+-- instead of carrying over.
+ALTER TABLE gateway_license_state ADD COLUMN IF NOT EXISTS last_success_url TEXT;
+
 -- ─────────────────────────────────────────────────────────────────────────────
 -- SPARE STATUS: 10 impellers × 14 spares = 140 rows (upserted by SpareMonitoringService)
 -- ─────────────────────────────────────────────────────────────────────────────

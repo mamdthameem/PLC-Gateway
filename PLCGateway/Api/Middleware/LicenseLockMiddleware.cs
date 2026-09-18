@@ -2,9 +2,10 @@ using PlcApi.Services;
 
 namespace PlcApi.Middleware;
 
-// When the license is locked (cloud validation failed beyond the grace period, Part E5), the
-// data API and dashboard are locked out, but the PLC pipeline keeps recording locally and the
-// admin + auth + health endpoints stay reachable. The frontend shows a lock screen on 402.
+// When the licence is locked (LicenseCheckService: the key was rejected, or the licence server has
+// not answered for longer than the grace period) the dashboard's data API answers 402 and the
+// dashboard shows its lock screen. The PLC pipeline keeps recording regardless, and the admin,
+// auth, licence-status and health endpoints stay reachable.
 public class LicenseLockMiddleware
 {
     private readonly RequestDelegate _next;
@@ -22,12 +23,14 @@ public class LicenseLockMiddleware
         bool isGuardedApi = path.StartsWithSegments("/api")
                             && !path.StartsWithSegments("/api/admin")
                             && !path.StartsWithSegments("/api/auth")
+                            && !path.StartsWithSegments("/api/license")
                             && !path.StartsWithSegments("/api/health");
 
-        if (isGuardedApi && _state.Locked)
+        var status = _state.Current;
+        if (isGuardedApi && status.Locked)
         {
             context.Response.StatusCode = StatusCodes.Status402PaymentRequired;
-            await context.Response.WriteAsJsonAsync(new { error = "license_locked" });
+            await context.Response.WriteAsJsonAsync(new { error = "license_locked", reason = status.Reason });
             return;
         }
 

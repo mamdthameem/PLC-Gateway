@@ -22,4 +22,11 @@
     </None>
   </ItemGroup>
 
+  <!-- Secrets for this install (Jwt:Key, Admin:ApiKey, License:Key). Git-ignored, and kept out of
+       the build and publish output on purpose: the server keeps its own copy, which a republish
+       must never overwrite. See DEPLOYMENT-NOTES.md section 9. -->
+  <ItemGroup>
+    <Content Update="appsettings.Production.json" CopyToOutputDirectory="Never" CopyToPublishDirectory="Never" />
+  </ItemGroup>
+
 </Project>

@@ -707,6 +707,7 @@ port-forwarding, config placeholders) is in **`DEPLOYMENT-NOTES.md`**.
 | `GET /api/shotsbreakdown` | Section 1 shots-per-refill table |
 | `GET /api/amps` | Live current for the selected impellers |
 | `GET /api/sparestatus` · `/alerts` | Spare grid (14 rows per selected impeller) · triggered subset |
+| `GET /api/license` | Licence state for the dashboard's lock screen: `locked`, `reason` (`ok`, `not_configured`, `rejected`, `unreachable`), `lockAfterUtc`. Anonymous, and never locked itself |
 | `GET` · `PUT /api/settings/impellers` | The impeller selection (`gateway_settings`): which impellers every panel shows **and** every energy / spare calculation counts. Any signed-in user may `PUT { "selected": [1, 2] }`; the save recalculates `plc_cycles.energy_kwh`, the daily rollup and the lifetime energy totals before it returns. Raw readings are recorded for all 10 impellers regardless |
 | `GET /api/trends` | **Graph series.** `bucket=auto` (default) picks the granularity from the span of history that exists and reports it in the `X-Trend-Bucket` response header; `day`/`month` read the `plc_daily_trends` rollup; omit `start`/`end` for all-time. `bucket=hour` is computed live from Tier 2 and requires both bounds. **Every series is gap-filled** — a bucket with no underlying rows comes back as zeros, never omitted, so equal spacing on a chart means equal elapsed time. |
 | `GET /api/historical?name=&start=&end=` | Raw Tier 2 points for one tag (used by the per-impeller amps trace) |

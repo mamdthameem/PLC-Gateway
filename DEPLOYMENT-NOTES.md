@@ -264,8 +264,10 @@ allowlist — the cloud caller runs on Firebase Cloud Functions, which has no fi
 current plan, so an IP-based gate can never pass and would only lock the real caller out.
 
 - Treat `Admin:ApiKey` as the entire perimeter for this path: generate it with a real secret
-  generator (not a short/guessable string), store it only in the deployed `appsettings.json` and
-  the cloud's own secret store, and rotate it if it's ever suspected leaked.
+  generator, store it only in the server's `appsettings.Production.json` (section 9) and the
+  cloud's own secret store, and rotate it if it's ever suspected leaked.
+- The gateway refuses a key shorter than 32 characters and the `REPLACE_WITH…` placeholder: until a
+  real key is set, every `/api/admin/*` request gets `403`, and the startup log says so.
 - HTTPS (section 6) is what keeps the key confidential in transit — never expose `/api/admin/*`
   over plain HTTP.
 
@@ -283,27 +285,71 @@ current plan, so an IP-based gate can never pass and would only lock the real ca
 
 ---
 
-## 9. `appsettings.json` checklist before go-live
+## 9. Settings and secrets before go-live
 
-Edit these in the deployed copy (`C:\inetpub\wwwroot\shotsense\appsettings.json`), then recycle the
-application pool:
+Settings come from two files in the site folder (`C:\inetpub\wwwroot\shotsense\`):
+
+| File | What goes in it | Replaced by a republish? |
+| ---- | --------------- | ------------------------ |
+| `appsettings.json` | The defaults shipped with the app. Do not edit it on the server | **Yes, every time** |
+| `appsettings.Production.json` | Everything for this install: the secrets, and any setting you change | **Never** — publish leaves it out on purpose, and git ignores it |
+
+IIS runs the app as `Production`, so it reads `appsettings.Production.json` automatically, and a key
+in it wins over the same key in `appsettings.json`. (IIS environment variables would work too, but
+they are stored in `web.config`, which every republish replaces.) Recycle the application pool after
+editing either file.
+
+### 9.1 Secrets
+
+The dev PC already has an `appsettings.Production.json` with three strong random values, in
+`d:\PLCGateway\PLCGateway\`. Copy it to the site folder by hand — publishing never includes it.
+
+| Key | What it is | If it is missing or still `REPLACE_WITH…` |
+| --- | ---------- | ----------------------------------------- |
+| `Jwt:Key` | Signs dashboard logins. 32+ characters | A random key is used for that run: logins work, but everyone must sign in again after every restart |
+| `Admin:ApiKey` | The cloud's key for `/api/admin/*`. 32+ characters. The same value goes into the cloud's secret store | Every `/api/admin/*` request is refused |
+| `License:Key` | This install's licence key, checked by the cloud | The cloud rejects the check and the dashboard locks (only when `License:CheckUrl` is set) |
+| `License:CheckUrl` | The cloud's licence-check address (`CONTRACT-admin-api.md`, "Licence check") | Empty = the licence check is off and the dashboard stays open |
+
+To make a new random value in PowerShell:
+
+```powershell
+$b = New-Object byte[] 48; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b)
+[Convert]::ToBase64String($b).TrimEnd('=').Replace('+','-').Replace('/','_')
+```
+
+### 9.2 Dashboard logins
+
+On the very first start with an **empty** `users` table the gateway creates one login from
+`Seed:AdminUsername` / `Seed:AdminPassword` — `sreesakthi` / `sreesakthi` by default. A database that
+already has logins is never seeded again, so changing `Seed:*` later does nothing. Change the password
+straight away with `tools\Set-DashboardPassword.ps1`, on the machine that has the database. It is not
+part of the publish output, so copy it to the server first:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Set-DashboardPassword.ps1 -Username sreesakthi
+```
+
+It asks for the new password twice without showing it (at least 12 characters) and stores only its
+hash. psql may first ask for the PostgreSQL `postgres` password. If PostgreSQL is not version 18, add
+`-Psql 'C:\Program Files\PostgreSQL\<version>\bin\psql.exe'`. Repeat for every other login.
+
+### 9.3 Other per-install settings
 
 | Key | Action |
 | --- | ------ |
 | `PLC:IpAddress`, `Rack`, `Slot` | set to this client's PLC |
 | `PostgreSQL:ConnectionString`, `ConnectionStrings:PostgresDb` | set the real password (both keys) |
-| `Jwt:Key` | replace with a 32+ character secret, unique per install |
-| `Seed:AdminUsername` / `Seed:AdminPassword` | change from `admin` / `admin123` **before first start** — the default admin is seeded on first run only |
-| `Admin:ApiKey` | replace with a generated key |
-| `License:CheckUrl`, `License:Key` | set for this install |
 | `Tags` | the ~443 tag addresses; see the note below |
+
+Put these in `appsettings.Production.json` as well, so a republish never loses them.
 
 > **`Tags` is per-client.** The tag names are a contract the calculation engine depends on — do not
 > rename them. Only the `Address` values (and the DB number) should change between clients. This is
 > hand-editing a large JSON array today; making it configurable from the dashboard is a planned
 > change, not yet implemented.
 
-A malformed `appsettings.json` stops the app from starting. If the site returns 500 after an edit,
+A malformed settings file stops the app from starting. If the site returns 500 after an edit,
 check Event Viewer → Windows Logs → Application, or temporarily set `stdoutLogEnabled="true"` in
 `web.config` and read `logs\stdout*.log`.
 
@@ -312,6 +358,9 @@ check Event Viewer → Windows Logs → Application, or temporarily set `stdoutL
 ## 10. Updating an existing deployment
 
 ```powershell
+# 0. run the migration on the server's database (safe to repeat; needed whenever migration.sql changed)
+psql -U postgres -d sreesakthi_gateway -f PLCGateway\migration.sql
+
 # 1. (only if the frontend changed)
 cd d:\PLCGateway\dashboard; npm run build
 
@@ -325,13 +374,63 @@ Copy-Item PLCGateway\bin\Release\net10.0\publish\* C:\inetpub\wwwroot\shotsense\
 Remove-Item C:\inetpub\wwwroot\shotsense\app_offline.htm
 ```
 
-`appsettings.json` is overwritten by the copy — back up the deployed one first, or exclude it and
-re-apply the section 9 values afterwards.
+`appsettings.json` is replaced by the copy. `appsettings.Production.json` is not in the publish
+output, so the secrets and per-install settings in it survive every update (section 9).
 
 Recording stops for the duration of the swap. The gateway backdates the gap as machine-OFF on
 restart ([`GatewayWorker`](PLCGateway/GatewayWorker.cs) + startup gap handling in
 [`Program.cs`](PLCGateway/Program.cs)), so the parameters stay correct — but keep the window short
 and avoid mid-blast-cycle swaps.
+
+---
+
+## 11. Testing over the internet with a Cloudflare quick tunnel
+
+A quick tunnel gives the gateway a temporary public `https://<words>.trycloudflare.com` address
+without opening any router port. It is for **testing only**: the address changes every time it
+starts and there is no uptime promise. Anyone who learns the address reaches the login page, so
+change the default password first (section 9.2).
+
+Install once:
+
+```powershell
+winget install --id Cloudflare.cloudflared -e
+# close and reopen PowerShell, then check:
+cloudflared --version
+```
+
+Start the gateway, then the tunnel, in two PowerShell windows:
+
+| Gateway runs as | Window 1 — the gateway | Window 2 — the tunnel | Public address |
+| --------------- | ---------------------- | --------------------- | -------------- |
+| `dotnet run` (dev PC) | `cd d:\PLCGateway\PLCGateway` then `dotnet run --no-launch-profile -- --urls http://localhost:5200` | `cloudflared tunnel --url http://localhost:5200` | `https://<words>.trycloudflare.com` |
+| IIS (section 5) | already running | `cloudflared tunnel --url http://localhost:80` | `https://<words>.trycloudflare.com/shotsense` |
+
+`--no-launch-profile` starts the app as `Production`, so it reads `appsettings.Production.json` (the
+secrets). A plain `dotnet run` starts as `Development` and ignores that file — the admin API then
+refuses everything. The tunnel prints its address in a box after a few seconds. Stop either window
+with Ctrl+C.
+
+Test each admin endpoint without and with the key (`403` without, `200` with):
+
+```powershell
+$T = 'https://<words>.trycloudflare.com'    # add /shotsense when the gateway runs under IIS
+$K = (Get-Content d:\PLCGateway\PLCGateway\appsettings.Production.json | ConvertFrom-Json).Admin.ApiKey
+'{"filterBy":"cycle","filterCycleFrom":101,"filterCycleTo":104}' | Set-Content -Encoding ascii "$env:TEMP\filter.json"
+
+curl.exe -s -o NUL -w "live     no key: %{http_code}`n" "$T/api/admin/live"
+curl.exe -s -o NUL -w "live     key:    %{http_code}`n" -H "X-Api-Key: $K" "$T/api/admin/live"
+curl.exe -s -o NUL -w "trends   no key: %{http_code}`n" "$T/api/admin/trends?bucket=month"
+curl.exe -s -o NUL -w "trends   key:    %{http_code}`n" -H "X-Api-Key: $K" "$T/api/admin/trends?bucket=month"
+curl.exe -s -o NUL -w "filter   no key: %{http_code}`n" -X POST -H "Content-Type: application/json" --data-binary "@$env:TEMP\filter.json" "$T/api/admin/filter"
+curl.exe -s -o NUL -w "filter   key:    %{http_code}`n" -X POST -H "Content-Type: application/json" -H "X-Api-Key: $K" --data-binary "@$env:TEMP\filter.json" "$T/api/admin/filter"
+curl.exe -s -o NUL -w "history  no key: %{http_code}`n" "$T/api/admin/history?metric=Tonnage&from=2026-05-01T00:00:00&to=2026-05-15T00:00:00&limit=5"
+curl.exe -s -o NUL -w "history  key:    %{http_code}`n" -H "X-Api-Key: $K" "$T/api/admin/history?metric=Tonnage&from=2026-05-01T00:00:00&to=2026-05-15T00:00:00&limit=5"
+```
+
+Use `curl.exe`, not `curl`: in Windows PowerShell 5.1, `curl` is a different command. Drop
+`-s -o NUL -w "…"` from any line to see the full answer. The `filter` call with the key really runs a
+filter, like pressing Apply, so it adds one row to `calculation_requests`.
 
 ---
 

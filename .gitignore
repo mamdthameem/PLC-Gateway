@@ -14,3 +14,6 @@
 ## NuGet
 *.nupkg
 **/packages/
+
+## Secrets for one install (Jwt:Key, Admin:ApiKey, License:Key) - never commit
+appsettings.Production.json

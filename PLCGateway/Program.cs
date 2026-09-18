@@ -52,7 +52,14 @@ builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddControllers();
 builder.Services.AddMemoryCache();
 
-var jwtKey = config["Jwt:Key"] ?? "YourSuperSecretKeyWithAtLeast32Chars!!";
+// Jwt:Key signs every dashboard login. The placeholder in appsettings.json is public (it is in the
+// repo), so it is never used: without a real key a random one is made for this run. Logins still
+// work, but everyone must sign in again after each restart (a warning says so at startup).
+var configuredJwtKey = SecretConfig.Get(config, "Jwt:Key", SecretConfig.MinLength);
+var jwtSigningKey = new JwtSigningKey(
+    configuredJwtKey ?? Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(48)),
+    generated: configuredJwtKey is null);
+builder.Services.AddSingleton(jwtSigningKey);
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
@@ -64,7 +71,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidateIssuerSigningKey = true,
             ValidIssuer = config["Jwt:Issuer"],
             ValidAudience = config["Jwt:Audience"],
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey))
+            IssuerSigningKey = jwtSigningKey.SecurityKey
         };
     });
 builder.Services.AddAuthorization();
@@ -84,6 +91,13 @@ using (var scope = app.Services.CreateScope())
     var db     = sp.GetRequiredService<DatabaseService>();
     var users  = sp.GetRequiredService<IUserService>();
     var logger = sp.GetRequiredService<ILogger<Program>>();
+
+    // Say it loudly when a secret is missing or still the placeholder. The gateway keeps running
+    // either way (it has to: it records the PLC), but that part of it is closed or temporary.
+    if (jwtSigningKey.Generated)
+        logger.LogWarning("Jwt:Key is not set (or is the placeholder, or under {n} characters): using a random key for this run. Everyone must sign in again after each restart.", SecretConfig.MinLength);
+    if (SecretConfig.Get(config, "Admin:ApiKey", SecretConfig.MinLength) is null)
+        logger.LogWarning("Admin:ApiKey is not set (or is the placeholder, or under {n} characters): every /api/admin/* request will be refused.", SecretConfig.MinLength);
 
     // Seed default dashboard users on first run (credentials from config; rotate at deployment).
     try
@@ -175,17 +189,25 @@ var spaStaticFiles = new StaticFileOptions
 app.UseDefaultFiles();
 app.UseStaticFiles(spaStaticFiles);
 
-// /api/admin/* is gated by IP allowlist + API key (before auth; not JWT-protected)
+// /api/admin/* is gated by the X-Api-Key check (before auth; not JWT-protected)
 app.UseMiddleware<AdminGuardMiddleware>();
 
 app.UseAuthentication();
 app.UseAuthorization();
 
-// Data API + dashboard return 402 when the license is locked (admin/auth/health exempt)
+// Data API + dashboard return 402 when the licence is locked (admin/auth/license/health exempt)
 app.UseMiddleware<LicenseLockMiddleware>();
 
 app.MapControllers();
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok" }));
+
+// Licence status for the dashboard lock screen. Anonymous and never locked itself, so a locked
+// dashboard can still say why. It shows only the lock state and the reason.
+app.MapGet("/api/license", (LicenseState license) =>
+{
+    var s = license.Current;
+    return Results.Ok(new { locked = s.Locked, reason = s.Reason, lockAfterUtc = s.LockAfterUtc });
+});
 
 // SPA fallback: client-side routes (BrowserRouter) resolve to index.html. Same options as
 // above — this is the path that serves /dashboard, so without them the no-cache header would
