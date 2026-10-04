@@ -10,6 +10,7 @@ import AmpsGraph from './AmpsGraph';
 import ImpellerSelector from './ImpellerSelector';
 import { IMPELLER_SELECTION_CHANGED } from '../services/settingsService';
 import { usePlcConnection } from '../utils/usePlcConnection';
+import { formatStamp } from '../utils/formatters';
 import type { AmpReading } from '../types';
 
 const POLL_MS = 1000;
@@ -207,7 +208,7 @@ export default function AmpsPanel() {
                     color="text.disabled"
                     sx={{ fontSize: '0.6rem', display: 'block', textAlign: 'center', lineHeight: 1.3 }}
                   >
-                    {new Date(r.lastUpdated).toLocaleTimeString()}
+                    {formatStamp(r.lastUpdated)}
                   </Typography>
                 ) : (
                   /* The headline above is the LIVE reading, so this line must not claim to label

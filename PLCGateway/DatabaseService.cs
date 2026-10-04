@@ -238,15 +238,22 @@ public class DatabaseService
     // QUERY HELPERS (used by CalculationService and CycleTrackingService)
     // ════════════════════════════════════════════════════════════════════════
 
-    public async Task<List<PlcHistoricalData>> GetStateChangesAsync(string parameterName, DateTime start, DateTime end)
+    // includeStart: the Section 2 replay's window begins at the first in-scope cycle's blast_start,
+    // which IS the timestamp of that cycle's rising-edge row. An exclusive start dropped that row,
+    // so every time/cycle filter lost its first cycle (one short on cycle_count, and its blast
+    // seconds). CycleTrackingService reads from a watermark it has already processed, so it keeps
+    // the exclusive default.
+    public async Task<List<PlcHistoricalData>> GetStateChangesAsync(
+        string parameterName, DateTime start, DateTime end, bool includeStart = false)
     {
         var results = new List<PlcHistoricalData>();
 
+        string startOp = includeStart ? ">=" : ">";
         string sql = $@"
             SELECT id, address, parameter_name, {ValueExpr}, data_type, storage_reason, timestamp, previous_value
             FROM plc_historical_data
             WHERE parameter_name = @name
-              AND timestamp > @start AND timestamp <= @end
+              AND timestamp {startOp} @start AND timestamp <= @end
             ORDER BY timestamp ASC";
 
         await RetryAsync(async conn =>
@@ -880,7 +887,7 @@ public class DatabaseService
                 blast_closed_sec = 0, first_blast_ts = NULL, cycle_count = 0, machine_seeded = FALSE,
                 machine_on = FALSE, machine_seg_start = NULL, machine_closed_sec = 0, refill_count = 0,
                 first_refill_change_ts = NULL, prev_refill_change_ts = NULL, last_refill_any_ts = NULL,
-                energy_total = 0, last_cycle_number = 0
+                energy_total = 0, last_cycle_number = 0, total_refill_weight_kg = 0
             WHERE id = 1";
         await RetryAsync(async conn =>
         {
@@ -1166,6 +1173,19 @@ public class DatabaseService
             await using var cmd = new NpgsqlCommand("DELETE FROM plc_daily_trends", conn);
             await cmd.ExecuteNonQueryAsync();
         }, "ResetDailyTrends");
+    }
+
+    // Clears the Section 1 shots breakdown so the replay rebuilds it (--rebuild-aggregation).
+    // Same standing as plc_daily_trends: derived, fully reconstructible from the Tier 2 refill and
+    // blast events. Without this a rebuild could only upsert, so a row the current rules no longer
+    // produce (e.g. an interval closed by a valueless refill row) would survive it.
+    public async Task ResetShotsBreakdownAsync()
+    {
+        await RetryAsync(async conn =>
+        {
+            await using var cmd = new NpgsqlCommand("DELETE FROM plc_shots_breakdown", conn);
+            await cmd.ExecuteNonQueryAsync();
+        }, "ResetShotsBreakdown");
     }
 
     // Rebuilds every day from the first recorded Tier 2 row up to tomorrow. Cost is proportional

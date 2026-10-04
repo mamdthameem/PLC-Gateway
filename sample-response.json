@@ -64,26 +64,32 @@
   "shotsBreakdown": [
     {
       "refillTimestamp": "2026-07-10T08:14:22Z",
+      "intervalStartTimestamp": "2026-07-10T04:51:37Z",
       "blastCount": 6
     },
     {
       "refillTimestamp": "2026-07-10T11:37:45Z",
+      "intervalStartTimestamp": "2026-07-10T08:14:22Z",
       "blastCount": 8
     },
     {
       "refillTimestamp": "2026-07-10T15:02:18Z",
+      "intervalStartTimestamp": "2026-07-10T11:37:45Z",
       "blastCount": 5
     },
     {
       "refillTimestamp": "2026-07-10T19:26:51Z",
+      "intervalStartTimestamp": "2026-07-10T15:02:18Z",
       "blastCount": 9
     },
     {
       "refillTimestamp": "2026-07-11T02:11:09Z",
+      "intervalStartTimestamp": "2026-07-10T19:26:51Z",
       "blastCount": 7
     },
     {
       "refillTimestamp": "2026-07-11T04:45:00Z",
+      "intervalStartTimestamp": "2026-07-11T02:11:09Z",
       "blastCount": 4
     }
   ],
@@ -151,6 +157,58 @@
       "parameterName": "Current_imp_10",
       "value": "12.5",
       "lastUpdated": "2026-07-11T06:42:14.902Z"
+    }
+  ],
+  "ampsLastCycle": [
+    {
+      "parameterName": "Current_imp_1",
+      "value": "12.03",
+      "lastUpdated": "2026-07-11T06:31:02Z"
+    },
+    {
+      "parameterName": "Current_imp_2",
+      "value": "11.54",
+      "lastUpdated": "2026-07-11T06:31:02Z"
+    },
+    {
+      "parameterName": "Current_imp_3",
+      "value": "12.32",
+      "lastUpdated": "2026-07-11T06:31:02Z"
+    },
+    {
+      "parameterName": "Current_imp_4",
+      "value": "11.74",
+      "lastUpdated": "2026-07-11T06:31:02Z"
+    },
+    {
+      "parameterName": "Current_imp_5",
+      "value": "12.61",
+      "lastUpdated": "2026-07-11T06:31:02Z"
+    },
+    {
+      "parameterName": "Current_imp_6",
+      "value": "11.25",
+      "lastUpdated": "2026-07-11T06:31:02Z"
+    },
+    {
+      "parameterName": "Current_imp_7",
+      "value": "12.42",
+      "lastUpdated": "2026-07-11T06:31:02Z"
+    },
+    {
+      "parameterName": "Current_imp_8",
+      "value": "11.83",
+      "lastUpdated": "2026-07-11T06:31:02Z"
+    },
+    {
+      "parameterName": "Current_imp_9",
+      "value": "11.45",
+      "lastUpdated": "2026-07-11T06:31:02Z"
+    },
+    {
+      "parameterName": "Current_imp_10",
+      "value": "12.12",
+      "lastUpdated": "2026-07-11T06:31:02Z"
     }
   ],
   "spareGrid": [
@@ -1587,6 +1645,7 @@
     "filterCycleTo": null,
     "filterMetalName": null,
     "processedAt": "2026-07-11T06:40:07.664Z",
+    "selectedParameters": null,
     "results": [
       {
         "parameterName": "blast_time_sec",
@@ -1668,6 +1727,48 @@
       {
         "metalName": "SG Iron",
         "productionKg": 105.5
+      }
+    ],
+    "amps": [
+      {
+        "impellerNumber": 1,
+        "overallAvgAmps": 11.8
+      },
+      {
+        "impellerNumber": 2,
+        "overallAvgAmps": 12.1
+      },
+      {
+        "impellerNumber": 3,
+        "overallAvgAmps": 12.4
+      },
+      {
+        "impellerNumber": 4,
+        "overallAvgAmps": 12.7
+      },
+      {
+        "impellerNumber": 5,
+        "overallAvgAmps": 13.0
+      },
+      {
+        "impellerNumber": 6,
+        "overallAvgAmps": 13.3
+      },
+      {
+        "impellerNumber": 7,
+        "overallAvgAmps": 13.6
+      },
+      {
+        "impellerNumber": 8,
+        "overallAvgAmps": 13.9
+      },
+      {
+        "impellerNumber": 9,
+        "overallAvgAmps": 14.2
+      },
+      {
+        "impellerNumber": 10,
+        "overallAvgAmps": 14.5
       }
     ]
   }

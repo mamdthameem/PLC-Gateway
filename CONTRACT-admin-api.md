@@ -15,9 +15,37 @@ Any change to that controller must update this file and `sample-response.json` i
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/api/admin/live` | Full live snapshot — Section 1 + last completed Section 2 |
-| `GET` | `/api/admin/trends` | Whole-history graph series for the 4 graphable lifetime parameters |
+| `GET` | `/api/admin/trends` | Bucketed graph series behind every tile chart except the per-cycle and per-item ones |
+| `GET` | `/api/admin/amps/by-cycle` | One impeller's average current per completed cycle, all history — the chart behind a live impeller tile |
 | `POST` | `/api/admin/filter` | Trigger a Section 2 filtered calculation synchronously, get the full result back in one response |
+| `GET` | `/api/admin/filter/{id}/amps` | One filtered calculation's impeller current — tile averages plus the per-cycle chart points |
 | `GET` | `/api/admin/history` | Raw recorded readings of one tag, oldest first, in pages |
+
+## Changes on 2026-09-19
+
+All field and endpoint changes are **additive** — nothing existing was renamed or removed, so a
+consumer written against the previous version keeps working unchanged.
+
+| Change | Where |
+| --- | --- |
+| New `ampsLastCycle[]` | `/live` |
+| New `intervalStartTimestamp` on each `shotsBreakdown[]` row | `/live` |
+| New `selectedParameters` and `amps[]` | `section2` in `/live` and the `POST /filter` response |
+| New endpoints `GET amps/by-cycle` and `GET filter/{id}/amps` | — |
+| `bucket=auto` accepted, resolved bucket in the `X-Trend-Bucket` header (default still `day`) | `/trends` |
+| Corrected: the chartable parameters, and `section2.results[]` has **six** names (it includes `production_qty_kg`) | docs only |
+
+Two **values** move as a result of gateway-side fixes (the cloud renders them verbatim, so no code
+change is needed, but the numbers will differ from before):
+
+- **Section 2 `cycle_count` and `blast_time_sec`** (and slightly `machine_utility_pct`) for time and
+  cycle filters. The filtered calculation used to skip the first cycle in scope, so every such
+  filter was one cycle short. A filter covering all history now equals the Section 1 figures
+  exactly. Results computed before the fix are stored snapshots and keep their old numbers until
+  that filter is applied again.
+- **Section 1 `avg_shot_refill_time_sec` and `shotsBreakdown[]`.** Refill-weight rows that carry no
+  numeric value (written by an early gateway build) are no longer counted as refills. A gateway
+  with no such rows is unaffected.
 
 The gateway also makes one call the other way, to the cloud — the licence check. The cloud must
 provide that endpoint; see "Licence check" near the end.
@@ -76,6 +104,7 @@ Render as delivered. Parse to number only for formatting/plotting — never for 
   "shotsBreakdown":  [ … ],
   "impellers":       { "selected": [ … ] },
   "amps":            [ … ],
+  "ampsLastCycle":   [ … ],
   "spareGrid":       [ … ],
   "spareAlerts":     [ … ],
   "section2":        { … } | null
@@ -93,6 +122,7 @@ Render as delivered. Parse to number only for formatting/plotting — never for 
 | `shotsBreakdown` | array | Section 1 shots-per-refill table (chart data) |
 | `impellers` | object | `{ "selected": [1, 2, …] }` — the site's impeller selection (`gateway_settings`), ascending integers 1–10. `amps`, `spareGrid` and `spareAlerts` hold **only** these impellers, and every energy figure (lifetime, trends, Section 2) counts only these. **So when impellers are hidden these lists get shorter**: with 9 selected, `amps` has 9 entries and `spareGrid` 126 rows (9 × 14). Build the display from the arrays, never from a fixed count of 10. Added 2026-09-15; additive |
 | `amps` | array | Live current per **selected** impeller — one entry each, up to 10 |
+| `ampsLastCycle` | array | Each selected impeller's average current over the **last completed cycle** — the "ran at N A" line. Added 2026-09-19; additive |
 | `spareGrid` | array | Spare-health grid, 14 entries per **selected** impeller (140 with all ten) |
 | `spareAlerts` | array | Subset of `spareGrid` where `triggerActive` is true and `thresholdHours > 0` |
 | `section2` | object, nullable | Latest **completed** filtered calculation — from either side, see below (null until one exists) |
@@ -155,10 +185,19 @@ Entry shape:
 
 Ordered by `refillTimestamp` ascending. Blast count between consecutive shot refills.
 
+**Each row is keyed by the refill that CLOSED its interval**, not the one that opened it: the row at
+`refillTimestamp` T counts the cycles run between the previous refill and T. So the interval
+currently in progress has **no row** (it has no closing refill yet), and the last row is the last
+*completed* interval — never "cycles since the last refill". Do not derive a "since refill" figure
+from it.
+
 | Field | JSON type | Description |
 | --- | --- | --- |
-| `refillTimestamp` | string (timestamp) | Time of the refill event |
-| `blastCount` | number (integer) | Rising edges of `Blast ON/OFF` until the next refill |
+| `refillTimestamp` | string (timestamp) | The refill that closed this interval |
+| `intervalStartTimestamp` | string (timestamp), nullable | The refill that opened it. For every row but the first this equals the previous row's `refillTimestamp`; the first row's opener has no row of its own, so the gateway looks it up. `null` only if no earlier refill is on record. Added 2026-09-19; additive |
+| `blastCount` | number (integer) | Rising edges of `Blast ON/OFF` between `intervalStartTimestamp` and `refillTimestamp` |
+
+A refill-weight row with no numeric value is not counted as a refill (see "Changes on 2026-09-19").
 
 ## `amps[]`
 
@@ -173,6 +212,22 @@ client-side sorting is needed. (Earlier versions of this document said the order
 | `parameterName` | string | `Current_imp_1` … `Current_imp_10` |
 | `value` | string | Amperes, decimal text (`"0"` when absent) |
 | `lastUpdated` | string (timestamp) | Tier 1 last-change time |
+
+## `ampsLastCycle[]`
+
+Each selected impeller's average current over the last completed blast cycle
+(`AVG` of the recorded samples inside that cycle's `[blastStart, blastEnd]`). The local dashboard
+shows it under a tile whose live reading is below 1 A, as "ran at N A" — context for an idle zero,
+never a substitute for the live headline. Same shape as `amps[]`.
+
+| Field | JSON type | Description |
+| --- | --- | --- |
+| `parameterName` | string | `Current_imp_N` |
+| `value` | string | Amperes, decimal text, 2 dp |
+| `lastUpdated` | string (timestamp) | `blastEnd` of that last cycle |
+
+**Match entries to `amps[]` by `parameterName`, not by position:** an impeller with no recorded
+sample in the last cycle is absent here. Empty before the first cycle completes.
 
 ## `spareGrid[]` and `spareAlerts[]`
 
@@ -215,14 +270,20 @@ and `POST /api/admin/filter`'s response are identical field-for-field.
 | `filterCycleFrom` / `filterCycleTo` | number (integer), nullable | Set when `filterBy == "cycle"` |
 | `filterMetalName` | string, nullable | Set when `filterBy == "metal"` |
 | `processedAt` | string (timestamp), nullable | When the backend finished computing |
+| `selectedParameters` | string[], nullable | The parameter keys the request asked for (see `POST /api/admin/filter`). `null` means all of them. Decides which tables and panels exist for this request — e.g. no `impeller_current` ⇒ no filtered amps panel. `machine_utility_pct` is never computed under a `metal` filter even when listed. Added 2026-09-19; additive |
 
 ### `section2.results[]`
 
-Ordered by `parameterName` ascending. Exactly these five names (no `machine_status`,
-no `last_refill_epoch_sec`, no scalar production — production appears per cycle below):
+Ordered by `parameterName` ascending. At most these six names — only the ones the request selected
+(no `machine_status`, `avg_shot_refill_time_sec`, `last_refill_epoch_sec` or
+`effective_shots_usage_kg_per_ton`; those are Section 1 only):
 
 `blast_time_sec`, `cycle_count`, `energy_kwh_total`, `energy_per_casting_kwh_kg`,
-`machine_utility_pct` — units and rounding identical to the `lifetime` table above.
+`machine_utility_pct`, `production_qty_kg` — units and rounding identical to the `lifetime` table
+above, **except `production_qty_kg`**: in Section 2 it is the sum of *declared* casting-item weights
+(the total of `metals[]`), not the PLC's `Tonnage` accumulator. The local dashboard names the two
+tiles differently for that reason — "Production (Tonnage)" for Section 1, "Production (Item
+Weight)" for Section 2. `energy_per_casting_kwh_kg` divides by the same declared total.
 
 | Field | JSON type |
 | --- | --- |
@@ -238,8 +299,8 @@ Ordered by `cycleNumber` ascending. One row per blast cycle in the filter scope.
 | `cycleNumber` | number (integer) | Global cycle number |
 | `blastStart` / `blastEnd` | string (timestamp) | Cycle window |
 | `metal1Name` … `metal4Name` | string, nullable | Casting metal name. **An empty slot is always `null`, never `""`** — names are trimmed and blank values normalized to null at recording time |
-| `metal1WeightKg` … `metal4WeightKg` | number, nullable | Declared weight in kg; `null` when absent or ≤ 0 at recording. Nullable independently of the name |
-| `productionKg` | number | kg, 2 dp (tonnage delta, floor 0) |
+| `metal1WeightKg` … `metal4WeightKg` | number, nullable | Declared weight in kg; `null` when absent or ≤ 0 at recording. Nullable independently of the name — **a weight with a `null` name is real and is counted as `"unspecified"` in `metals[]`**; show it as `unspecified`, not as an empty slot |
+| `productionKg` | number | kg, 2 dp — the cycle's **Tonnage delta** (measured, floor 0), not the sum of the declared weights. The local dashboard titles this column "Tonnage Produced (kg)" |
 | `energyKwh` | number | 3 dp — same energy-formula caveat as above |
 
 ### `section2.shotsBreakdown[]` — **REMOVED (breaking)**
@@ -273,16 +334,44 @@ Two things now affect what is present here:
 
 Empty array (not `null`) when no cycle in scope declared any casting-metal weight.
 
+### `section2.amps[]`
+
+The "Impeller Current (Filtered)" tiles: one entry per impeller, ordered by `impellerNumber`.
+Empty when `impeller_current` was not selected. The per-cycle points behind each tile's chart are
+**not** here — fetch them from `GET /api/admin/filter/{requestId}/amps` when a tile is opened (over
+all history that is ~14 000 points, too many for every `Live()` poll). Added 2026-09-19; additive.
+
+| Field | JSON type | Description |
+| --- | --- | --- |
+| `impellerNumber` | number (integer) | 1–10 — the impellers that were selected when the filter was computed |
+| `overallAvgAmps` | number, nullable | Duration-weighted average current across the in-scope cycles, 2 dp. `null` when no cycle had a sample for this impeller |
+
 ---
 
 # `GET /api/admin/trends`
 
-Whole-history graph data for the 4 graphable Section 1 lifetime parameters
-(`machine_utility_pct`, `production_qty_kg`, `energy_kwh_total`, `energy_per_casting_kwh_kg`).
+The bucketed series behind the tile charts. The local dashboard draws these charts from it:
+
+| Tile | Section 1 (no bounds — all history) | Section 2 (`start`/`end` = the filter window; **time filter only**) | Field(s) |
+| --- | --- | --- | --- |
+| `machine_utility_pct` | yes | yes | `utilityPct` |
+| `production_qty_kg` | yes — bars `productionKg`, line `tonnageEnd` | no — Section 2 draws `metals[]` as one bar per item | `productionKg`, `tonnageEnd` |
+| `energy_kwh_total` | yes | no — Section 2 draws `section2.cycles[].energyKwh`, one bar per cycle | `energyKwh` |
+| `blast_time_sec` | yes | yes | `blastOnSec` |
+| `cycle_count` | yes | yes | `cycleCount` |
+
+`energy_per_casting_kwh_kg` has **no chart in either section** — kWh/kg varies by thousandths across
+a bucket, so any axis fitted to it turns rounding into an apparent trend. (`efficiencyKwhPerKg` is
+still returned; the local dashboard does not plot it.) Under a cycle or item filter no Section 2
+tile uses this endpoint: those filters carry a placeholder time window.
+
 Exactly the local dashboard's `/api/trends` — same rollup logic, same query params — put behind
-`AdminGuardMiddleware` instead of JWT so the cloud can reach it. (The local endpoint additionally
-accepts `bucket=auto` and returns an `X-Trend-Bucket` header; this one does not, so the cloud's
-existing `bucket` values keep working unchanged.) `Live()` intentionally does **not**
+`AdminGuardMiddleware` instead of JWT so the cloud can reach it. **Pass `bucket=auto` to match the
+local dashboard**: the gateway picks the granularity (≤ 2 days of window ⇒ `hour`; otherwise ≤ 400
+days of recorded history ⇒ `day`, else `month`) and returns its choice in the `X-Trend-Bucket`
+response header, for titling the axis. Only the gateway knows how much history exists, so do not
+choose the bucket client-side. The default is still `day`, so existing callers are unaffected.
+`Live()` intentionally does **not**
 carry this data: it changes at most once a minute (the `AggregationService` cadence) and the
 payload is comparatively large, so folding it into every `Live()` poll would be constant waste for
 data that's almost always unchanged since the last poll. Call this once per dashboard load, or on
@@ -291,11 +380,13 @@ its own slow timer — not on `Live()`'s poll cadence.
 | Item | Value |
 | --- | --- |
 | Method / path | `GET /api/admin/trends` |
-| Query params | `bucket` = `hour` \| `day` \| `month` (default `day`); `start`, `end` — ISO 8601, optional except `bucket=hour` which requires both |
+| Query params | `bucket` = `auto` \| `hour` \| `day` \| `month` (default `day`); `start`, `end` — ISO 8601, optional except `bucket=hour` which requires both |
+| Response header | `X-Trend-Bucket: hour` \| `day` \| `month` — the bucket actually used (useful with `auto`) |
 | No bounds | Returns the full all-time series at the requested bucket size. Pass `bucket=month` with no `start`/`end` for the compact whole-history series |
 | **Gap-filled** | **Behaviour change.** Every bucket in the range is now returned, including buckets with no underlying data (all numeric fields `0`; `tonnageEnd` carried forward from the last known reading). Previously only buckets that had data were returned. A consumer that plots the array in order now gets a series where equal spacing means equal elapsed time; a consumer that COUNTS entries will see more of them for the same range, and one that treats every entry as "a day the plant ran" must now check `machineOnSec > 0` |
 | Validation errors | `400 {"error": "..."}` — `start` ≥ `end`, invalid `bucket`, or `bucket=hour` missing a bound |
 | Server failure | `500 {"error": "trends query failed"}` |
+| Timestamps | `day` is UTC like everything else. Buckets are gateway-local calendar days/months, so a day bucket starts at local midnight — `18:30Z` the previous day in IST. Label buckets in the gateway's local time |
 
 Response: JSON array, one entry per bucket, ordered ascending by `day`.
 
@@ -340,7 +431,7 @@ uses, so there is exactly one implementation of the math regardless of which sid
 | `energy_per_casting_kwh_kg` | a `results[]` entry |
 | `blast_time_sec` | a `results[]` entry |
 | `cycle_count` | a `results[]` entry |
-| `impeller_current` | the `plc_filtered_amps_data` rows (read via the local `/api/filter/{id}/amps`) |
+| `impeller_current` | `section2.amps[]` (tile averages) and the per-cycle points served by `GET /api/admin/filter/{id}/amps` |
 
 Unselected parameters are **never computed** — they are absent from `results[]`, and `cycles[]` is
 empty if nothing cycle-derived was selected. This is not an error condition.
@@ -352,7 +443,7 @@ blank/missing `filterMetalName`; an unrecognised entry in `selectedParameters` (
 
 **Response:** `200`, identical shape to `Live().section2` (see above) — `requestId`, `filterBy`,
 `filterStart`/`filterEnd`, `periodLabel`, `filterCycleFrom`/`filterCycleTo`, `filterMetalName`,
-`processedAt`, `results[]`, `cycles[]`, `metals[]`. **`shotsBreakdown[]` is no longer part of this
+`processedAt`, `selectedParameters`, `results[]`, `cycles[]`, `metals[]`, `amps[]`. **`shotsBreakdown[]` is no longer part of this
 response** (see above). No polling, no separate status check — the full result is in this one
 response.
 
@@ -380,6 +471,49 @@ not empirically measure a large-N case, and won't fabricate cycle/history rows t
 a benchmark). Re-benchmark against a realistic data volume before finalizing a hard timeout; a
 generous timeout (30–60s) is a safe starting point given the structural fix, not a number measured
 against real scale.
+
+---
+
+# `GET /api/admin/amps/by-cycle`
+
+One impeller's average current for **every** completed cycle — the chart that opens from a live
+impeller tile. Same service as the local dashboard's `/api/amps/by-cycle`. Plot every point: the
+x-axis is the cycle number (a numeric axis, not time), one point per cycle.
+
+| Item | Value |
+| --- | --- |
+| Query | `impeller` — integer 1–10, required |
+| Validation error | `400 {"error": "impeller must be between 1 and 10"}` |
+| Server failure | `500 {"error": "per-cycle amps query failed"}` |
+
+Response: JSON array ordered by `cycleNumber` ascending.
+
+| Field | JSON type | Description |
+| --- | --- | --- |
+| `cycleNumber` | number (integer) | Global cycle number |
+| `blastEnd` | string (timestamp) | When the cycle ended |
+| `avgAmps` | number, nullable | Average current inside that cycle's blast window. `null` when the cycle has no recorded sample |
+
+---
+
+# `GET /api/admin/filter/{id}/amps`
+
+One filtered calculation's impeller current, including the per-cycle points behind each
+"Impeller Current (Filtered)" tile's chart. `{id}` is a `requestId` — from `Live().section2` or from
+a `POST /api/admin/filter` response. Same service as the local `/api/filter/{id}/amps`.
+
+| Item | Value |
+| --- | --- |
+| Unknown or unselected request | `200 []` — nothing was computed for it |
+| Server failure | `500 {"error": "filtered amps query failed"}` |
+
+Response: JSON array, one entry per impeller, ordered by `impellerNumber`.
+
+| Field | JSON type | Description |
+| --- | --- | --- |
+| `impellerNumber` | number (integer) | 1–10 |
+| `overallAvgAmps` | number, nullable | Same value as `section2.amps[].overallAvgAmps` |
+| `cycles[]` | array | One point per in-scope cycle, ordered by `cycleNumber`: `{ cycleNumber, blastEnd, avgAmps }`, `avgAmps` 2 dp and nullable. Plot **all** of them — the tile averages every one |
 
 ---
 
@@ -466,7 +600,9 @@ A lock closes only the gateway's own dashboard. PLC recording and every calculat
 
 `sample-response.json` (repo root) is a full `GET /api/admin/live` response in exactly the shape
 described above, with realistic dummy values — including `impellers.selected`, all 140 `spareGrid`
-rows (all ten impellers selected), `amps` in impeller-number order, and `section2.metals[]` — usable
+rows (all ten impellers selected), `amps` in impeller-number order, `ampsLastCycle`,
+`shotsBreakdown[].intervalStartTimestamp`, and `section2.metals[]` / `amps[]` /
+`selectedParameters` — usable
 directly as a fixture in the cloud app with no live connection. It does not include sample responses
 for `/api/admin/trends`, `/api/admin/filter` or `/api/admin/history` — the field tables above are
 authoritative for those.

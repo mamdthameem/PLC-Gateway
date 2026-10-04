@@ -298,7 +298,8 @@ public class FilterService : IFilterService
 
             const string sql = @"
                 SELECT id, filter_by, filter_start, filter_end, period_label,
-                       filter_cycle_from, filter_cycle_to, filter_metal_name, processed_at
+                       filter_cycle_from, filter_cycle_to, filter_metal_name, processed_at,
+                       selected_parameters
                 FROM calculation_requests
                 WHERE status = 'done'
                 ORDER BY id DESC
@@ -318,7 +319,8 @@ public class FilterService : IFilterService
                 FilterCycleFrom = reader.IsDBNull(5) ? null : reader.GetInt32(5),
                 FilterCycleTo   = reader.IsDBNull(6) ? null : reader.GetInt32(6),
                 FilterMetalName = reader.IsDBNull(7) ? null : reader.GetString(7),
-                ProcessedAt     = reader.IsDBNull(8) ? null : reader.GetDateTime(8)
+                ProcessedAt     = reader.IsDBNull(8) ? null : reader.GetDateTime(8),
+                SelectedParameters = reader.IsDBNull(9) ? null : reader.GetFieldValue<string[]>(9)
             };
         }
         catch (Exception ex)

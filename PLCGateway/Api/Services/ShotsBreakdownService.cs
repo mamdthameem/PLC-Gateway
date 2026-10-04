@@ -46,6 +46,7 @@ public class ShotsBreakdownService : IShotsBreakdownService
                             FROM plc_historical_data h
                             WHERE h.parameter_name = @refill_tag
                               AND h.storage_reason = ANY(@change_reasons)
+                              AND h.value_num IS NOT NULL
                               AND h.timestamp < b.refill_timestamp)
                        ) AS interval_start,
                        b.blast_count
@@ -54,7 +55,8 @@ public class ShotsBreakdownService : IShotsBreakdownService
 
             await using var cmd = new NpgsqlCommand(sql, conn);
             cmd.Parameters.AddWithValue("refill_tag", RefillTag);
-            // Must match CalculationService.RefillChangeReasons — an INITIAL snapshot is not a refill.
+            // Must match CalculationService.FoldRefillAsync — an INITIAL snapshot is not a refill, and
+            // neither is a row with no numeric value (value_num IS NOT NULL above).
             cmd.Parameters.AddWithValue("change_reasons", ChangeReasons);
             await using var reader = await cmd.ExecuteReaderAsync();
 

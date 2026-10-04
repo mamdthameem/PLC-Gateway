@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx';
-import { PARAM_META, formatParameterValue } from './unitConverters';
+import { PARAM_META, formatParameterValue, declaredItemName } from './unitConverters';
 import type { FilterResult, FilteredCycle, FilteredMetalProduction } from '../types';
 
 /**
@@ -83,23 +83,23 @@ export function exportFilteredWorkbook(input: FilteredExportInput): void {
   ];
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(itemRows), 'Item Production');
 
-  // Sheet 3 — per-cycle breakdown. The four declared slots keep their per-cycle detail here even
-  // though Section 2 no longer renders a cycle table on screen.
+  // Sheet 3 — per-cycle breakdown, the same rows as the on-screen Cycle Log. "Tonnage Produced" is
+  // the cycle's Tonnage delta — measured, not declared, so it need not match the item weights.
   const cycleRows = [
     [
       'Cycle No.', 'Start Time', 'End Time',
       'Item 1', 'Item 1 kg', 'Item 2', 'Item 2 kg',
       'Item 3', 'Item 3 kg', 'Item 4', 'Item 4 kg',
-      'Weight (kg)', 'Energy (kWh)',
+      'Tonnage Produced (kg)', 'Energy (kWh)',
     ],
     ...cycles.map(c => [
       c.cycleNumber,
       localStamp(c.blastStart),
       localStamp(c.blastEnd),
-      c.metal1Name ?? '', c.metal1WeightKg ?? '',
-      c.metal2Name ?? '', c.metal2WeightKg ?? '',
-      c.metal3Name ?? '', c.metal3WeightKg ?? '',
-      c.metal4Name ?? '', c.metal4WeightKg ?? '',
+      declaredItemName(c.metal1Name, c.metal1WeightKg) ?? '', c.metal1WeightKg ?? '',
+      declaredItemName(c.metal2Name, c.metal2WeightKg) ?? '', c.metal2WeightKg ?? '',
+      declaredItemName(c.metal3Name, c.metal3WeightKg) ?? '', c.metal3WeightKg ?? '',
+      declaredItemName(c.metal4Name, c.metal4WeightKg) ?? '', c.metal4WeightKg ?? '',
       c.productionKg,
       c.energyKwh,
     ]),

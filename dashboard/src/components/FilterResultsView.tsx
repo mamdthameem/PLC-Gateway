@@ -11,7 +11,7 @@ import CycleDataGraph from './CycleDataGraph';
 import TrendMetricGraph from './TrendMetricGraph';
 import ItemProductionGraph from './ItemProductionGraph';
 import FilteredAmpsPanel from './FilteredAmpsPanel';
-import { byParamOrder } from '../utils/unitConverters';
+import { byParamOrder, declaredItemName } from '../utils/unitConverters';
 import { exportFilteredWorkbook } from '../utils/exportFilteredExcel';
 import type {
   FilterResult, FilteredCycle, FilteredMetalProduction, Section2ParamKey,
@@ -92,8 +92,12 @@ function ItemProductionTable({ items }: { items: FilteredMetalProduction[] }) {
  * individual cycle contributed and which items it declared. Kept for the same reason.
  */
 function CycleTable({ cycles }: { cycles: FilteredCycle[] }) {
-  const itemCell = (name: string | null, kg: number | null) =>
-    name ? `${name}${kg != null ? ` · ${kg.toFixed(1)} kg` : ''}` : '—';
+  // A weight declared without a name reads "unspecified · 144.0 kg", matching its row in the
+  // Production by Item table; a bare "—" hid it while the item total still counted it.
+  const itemCell = (name: string | null, kg: number | null) => {
+    const shown = declaredItemName(name, kg);
+    return shown ? `${shown}${kg != null ? ` · ${kg.toFixed(1)} kg` : ''}` : '—';
+  };
 
   return (
     <TableContainer component={Paper} variant="outlined" sx={{ overflowX: 'auto', maxHeight: 520 }}>
@@ -107,7 +111,9 @@ function CycleTable({ cycles }: { cycles: FilteredCycle[] }) {
             <TableCell sx={{ fontWeight: 700 }}>Item 2</TableCell>
             <TableCell sx={{ fontWeight: 700 }}>Item 3</TableCell>
             <TableCell sx={{ fontWeight: 700 }}>Item 4</TableCell>
-            <TableCell align="right" sx={{ fontWeight: 700 }}>Weight (kg)</TableCell>
+            {/* The cycle's Tonnage delta — measured, not declared. Called "Weight (kg)" until
+                2026-09, which read as the sum of the item weights beside it; it is not. */}
+            <TableCell align="right" sx={{ fontWeight: 700 }}>Tonnage Produced (kg)</TableCell>
             <TableCell align="right" sx={{ fontWeight: 700 }}>Energy (kWh)</TableCell>
           </TableRow>
         </TableHead>

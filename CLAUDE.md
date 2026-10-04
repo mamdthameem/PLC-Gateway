@@ -17,7 +17,7 @@ Industry project. A single **unified ASP.NET Core (.NET 10) application** hosted
 ## Non-negotiable constraints
 
 - **Never delete historical data.** `plc_historical_data` must grow forever. No compression, archiving, or deletion — ever. This is a hard client requirement. The typed-column migration keeps the original TEXT `value` column **frozen** (never dropped).
-  - `plc_daily_trends` is the one exception *and it is not history*: it is a derived rollup, fully reconstructible from `plc_historical_data`, so it may be cleared and rebuilt (`--rebuild-aggregation`). Never treat it as a source of truth, and never delete raw rows because the rollup already has the summary.
+  - `plc_daily_trends` and `plc_shots_breakdown` are the only exceptions *and they are not history*: both are derived, fully reconstructible from `plc_historical_data`, so `--rebuild-aggregation` clears and rebuilds them. Never treat either as a source of truth, and never delete raw rows because a derived table already has the summary. (`plc_shots_breakdown` joined this list 2026-09-19, by decision — a rebuild that could only upsert kept rows the current rules no longer produce.)
 - **DB is still the message bus for Section 2.** The dashboard triggers filtered calculations by inserting into `calculation_requests`; the backend processes them and writes results. Live dashboard data is served by the in-process JSON API (added in the unified-app redesign) — it reads the same tables, never recomputes heavy work per request.
 - **Discuss architecture before coding.** For any non-trivial change, draft the plan as a table or diagram and wait for go-ahead before writing code.
 - **Terminology is strict:** `tags` = raw PLC readings stored in `plc_historical_data`; `parameters` = calculated business values stored in `plc_lifetime_parameters` and related tables. Never confuse these in code, comments, or conversation.
@@ -140,9 +140,22 @@ row but the first that is simply the previous row, but the FIRST row's opener ha
 so the API recovers it from the Tier 2 refill events. Without it the earliest bar was the only one
 that could not name its own window.
 
-Maintained by the incremental engine via upsert (no TRUNCATE), so the dashboard never reads an empty/partial table. Shared dataset for parameters #7 and #8.
+Maintained by the incremental engine via upsert (no TRUNCATE), so the dashboard never reads an empty/partial table. Shared dataset for parameters #7 and #8. `--rebuild-aggregation` clears it and the replay rebuilds it.
+
+> **A refill-weight row with no numeric value is not a refill** (`FoldRefillAsync`, and the opener lookup in
+> `ShotsBreakdownService`). An early gateway build stored this DINT tag as a BOOL: 299 rows on 2026-01-21 read
+> `"False"` → `"False"` under reason COV. Counted as refills they drew 299 empty bars and pulled
+> `avg_shot_refill_time_sec` down to 19h 8m; excluded (2026-09-19, by decision) it is ~43 days on the dev DB. Tier 2
+> keeps every one of those rows.
 
 > **Section 1 is now incremental** (`plc_aggregation_state`): each pass folds only Tier 2 rows newer than the stored watermark into running accumulators, producing identical outputs to the old full-replay engine. Energy is a running sum of the per-cycle `plc_cycles.energy_kwh`. Run with `--rebuild-aggregation` to replay from scratch.
+
+> **Section 2 replay window (fixed 2026-09-19).** Time and cycle filters replay Tier 2 from the first in-scope
+> cycle's `blast_start`, which IS that cycle's rising-edge row. The read was `timestamp > start`, so every such
+> filter dropped its first cycle (one short on `cycle_count`, and its blast seconds). It now includes the start
+> row (`GetStateChangesAsync(..., includeStart: true)`, Section 2 only — `CycleTrackingService` keeps the
+> exclusive read), and `ComputeOnTimeSeconds` opens an already-on segment at the window start. Check: a filter
+> covering all history equals Section 1 exactly. Older Section 2 results are snapshots and keep the old numbers.
 
 ### Section 2 differences
 
@@ -166,7 +179,7 @@ Maintained by the incremental engine via upsert (no TRUNCATE), so the dashboard 
 
 | Column          | Formula                                                    |
 | --------------- | ---------------------------------------------------------- |
-| `production_kg` | `tonnage_kg(this cycle) − tonnage_kg(prev cycle)`, floor 0 |
+| `production_kg` | `tonnage_kg(this cycle) − tonnage_kg(prev cycle)`, floor 0. Shown as **"Tonnage Produced (kg)"** in the Cycle Log and Excel (was "Weight (kg)", which read as the sum of the declared item weights beside it) |
 | `energy_kwh`    | `avg_amps_all_impellers × cycle_duration_hours`            |
 
 
@@ -363,7 +376,7 @@ Thresholds (spare_index 0–13, hours): 100, 300, 300, 600, 2000, 2000, 300, 200
 | `PLCGateway/PlcService.cs`                 | S7.NetPlus wrapper — `ReadRegion`, reserved `Write`                       |
 | `PLCGateway/CovDetectionService.cs`        | COV logic (relative/absolute deadband, state-change)                     |
 | `PLCGateway/Models/*.cs`                   | `PlcCycle`, `CalculationRequest`, `AggregationState`, `ScanWrites`, …     |
-| `PLCGateway/Api/Controllers/*.cs`          | Dashboard API + `AuthController` (JWT) + `AdminController` (cloud pulls: `live`, `trends`, `filter`, `history`) + `TrendsController` (local dashboard's graph series, JWT-protected) + `SettingsController` (`GET/PUT /api/settings/impellers`) |
+| `PLCGateway/Api/Controllers/*.cs`          | Dashboard API + `AuthController` (JWT) + `AdminController` (cloud pulls: `live`, `trends`, `filter`, `filter/{id}/amps`, `amps/by-cycle`, `history`) + `TrendsController` (local dashboard's graph series, JWT-protected) + `SettingsController` (`GET/PUT /api/settings/impellers`) |
 | `PLCGateway/Api/Services/*.cs`             | API data services (typed reads), `TrendsService` (all graph math, `bucket=auto`, gap-fill), `UserService`, `LicenseState` |
 | `dashboard/src/utils/trendBuckets.ts`      | Axis + tooltip label formatting per bucket (selection moved server-side)  |
 | `dashboard/src/utils/chartAxis.ts`         | Shared axis construction — strided ticks, rounded y-domains, axis titles  |

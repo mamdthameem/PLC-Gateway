@@ -6,7 +6,7 @@ using PlcApi.Services;
 namespace PlcApi.Controllers;
 
 // Cloud pull endpoints (Part E4). Not JWT-protected — access is gated by AdminGuardMiddleware
-// (IP allowlist + X-Api-Key). Reads local PostgreSQL only; returns JSON.
+// (X-Api-Key only; no IP allowlist). Reads local PostgreSQL only; returns JSON.
 //
 // /live mirrors the FULL local dashboard by reusing the same API services the dashboard binds
 // to (single source of truth — the cloud must never recompute). Response contract:
@@ -72,11 +72,12 @@ public class AdminController : ControllerBase
     private async Task<object> BuildSection2Async(
         int requestId, string filterBy, DateTime filterStart, DateTime filterEnd,
         string? periodLabel, int? filterCycleFrom, int? filterCycleTo, string? filterMetalName,
-        DateTime? processedAt)
+        DateTime? processedAt, string[]? selectedParameters)
     {
         var results     = await _filter.GetResultsAsync(requestId);
         var cycles      = await _filter.GetCycleDataAsync(requestId);
         var metals      = await _filter.GetMetalProductionAsync(requestId);
+        var amps        = await _filter.GetAmpsDataAsync(requestId);
 
         return new
         {
@@ -89,6 +90,10 @@ public class AdminController : ControllerBase
             filterCycleTo,
             filterMetalName,
             processedAt = ToUtc(processedAt),
+            // What the request asked for; null = everything. Tells the cloud which tables and
+            // panels exist for a request it did not submit itself (the local dashboard decides the
+            // same way).
+            selectedParameters = selectedParameters is { Length: > 0 } ? selectedParameters : null,
             results = results.Select(p => new
             {
                 parameterName = p.ParameterName,
@@ -117,6 +122,15 @@ public class AdminController : ControllerBase
             {
                 metalName    = m.MetalName,
                 productionKg = m.ProductionKg
+            }),
+            // The "Impeller Current (Filtered)" tiles: one duration-weighted average per selected
+            // impeller. The per-cycle points behind each tile's chart are served separately by
+            // GET filter/{id}/amps — about 14 000 of them over all history, too many for every
+            // Live() poll. Empty when impeller_current was not selected.
+            amps = amps.Select(a => new
+            {
+                impellerNumber = a.ImpellerNumber,
+                overallAvgAmps = a.OverallAvgAmps
             })
         };
     }
@@ -161,6 +175,7 @@ public class AdminController : ControllerBase
             var lifetime  = await _lifetime.GetAllAsync();
             var shots     = await _shots.GetAllAsync();
             var amps      = await _amps.GetImpellerAmpsAsync();
+            var lastCycle = await _amps.GetLastCycleAveragesAsync();
             var spareGrid = await _spares.GetAllAsync();
             var alerts    = await _spares.GetAlertsAsync();
 
@@ -175,7 +190,7 @@ public class AdminController : ControllerBase
                 section2 = await BuildSection2Async(
                     latest.RequestId, latest.FilterBy, latest.FilterStart, latest.FilterEnd,
                     latest.PeriodLabel, latest.FilterCycleFrom, latest.FilterCycleTo,
-                    latest.FilterMetalName, latest.ProcessedAt);
+                    latest.FilterMetalName, latest.ProcessedAt, latest.SelectedParameters);
             }
 
             return Ok(new
@@ -200,13 +215,25 @@ public class AdminController : ControllerBase
                 }),
                 shotsBreakdown = shots.Select(s => new
                 {
-                    refillTimestamp = ToUtc(s.RefillTimestamp),
-                    blastCount      = s.BlastCount
+                    refillTimestamp        = ToUtc(s.RefillTimestamp),
+                    // The refill that OPENED the interval (refillTimestamp closed it). Null only
+                    // for an interval with no earlier refill on record.
+                    intervalStartTimestamp = ToUtc(s.IntervalStartTimestamp),
+                    blastCount             = s.BlastCount
                 }),
                 // The site's impeller selection (gateway_settings): amps, spareGrid and spareAlerts
                 // hold only these impellers, and every energy figure counts only these.
                 impellers = new { selected = _impellers.Snapshot() },
                 amps = amps.Select(a => new
+                {
+                    parameterName = a.ParameterName,
+                    value         = a.Value,
+                    lastUpdated   = ToUtc(a.LastUpdated)
+                }),
+                // Each selected impeller's average current over the last completed cycle — the
+                // "ran at N A" line under an idle tile. An impeller with no sample in that cycle
+                // is absent, so match entries to amps by parameterName, never by position.
+                ampsLastCycle = lastCycle.Select(a => new
                 {
                     parameterName = a.ParameterName,
                     value         = a.Value,
@@ -230,6 +257,10 @@ public class AdminController : ControllerBase
     // it behind AdminGuardMiddleware instead of JWT so the cloud can reach it. A separate
     // endpoint from Live() on purpose: this data changes at most once a minute (AggregationService
     // cadence), so it doesn't belong on Live()'s poll cadence — call this once per dashboard load.
+    //
+    // bucket=auto lets the gateway choose, exactly as the local dashboard does: only the gateway
+    // knows how much history exists. The choice comes back in X-Trend-Bucket. The default stays
+    // "day" so callers written before auto existed are unaffected.
     [HttpGet("trends")]
     public async Task<IActionResult> Trends(
         [FromQuery] DateTimeOffset? start,
@@ -239,8 +270,8 @@ public class AdminController : ControllerBase
         if (start.HasValue && end.HasValue && start >= end)
             return BadRequest(new { error = "start must be before end" });
 
-        if (bucket is not ("hour" or "day" or "month"))
-            return BadRequest(new { error = "bucket must be 'hour', 'day' or 'month'" });
+        if (bucket is not ("auto" or "hour" or "day" or "month"))
+            return BadRequest(new { error = "bucket must be 'auto', 'hour', 'day' or 'month'" });
 
         if (bucket == "hour" && (!start.HasValue || !end.HasValue))
             return BadRequest(new { error = "hourly trends require both start and end" });
@@ -248,8 +279,9 @@ public class AdminController : ControllerBase
         try
         {
             // Storage is gateway-local wall time — same conversion TrendsController applies.
-            var data = await _trends.GetTrendsAsync(start?.LocalDateTime, end?.LocalDateTime, bucket);
-            return Ok(data.Select(d => new
+            var series = await _trends.GetSeriesAsync(start?.LocalDateTime, end?.LocalDateTime, bucket);
+            Response.Headers["X-Trend-Bucket"] = series.Bucket;
+            return Ok(series.Rows.Select(d => new
             {
                 day                = ToUtc(d.Day),
                 machineOnSec       = d.MachineOnSec,
@@ -270,6 +302,59 @@ public class AdminController : ControllerBase
         {
             _logger.LogError(ex, "admin/trends failed");
             return StatusCode(500, new { error = "trends query failed" });
+        }
+    }
+
+    // Average current per completed cycle for one impeller, across all recorded cycles — the chart
+    // behind a live impeller tile. Same service as the local /api/amps/by-cycle.
+    [HttpGet("amps/by-cycle")]
+    public async Task<IActionResult> AmpsByCycle([FromQuery] int impeller)
+    {
+        if (impeller < 1 || impeller > 10)
+            return BadRequest(new { error = "impeller must be between 1 and 10" });
+
+        try
+        {
+            var points = await _amps.GetPerCycleAveragesAsync(impeller);
+            return Ok(points.Select(p => new
+            {
+                cycleNumber = p.CycleNumber,
+                blastEnd    = ToUtc(p.BlastEnd),
+                avgAmps     = p.AvgAmps
+            }));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "admin/amps/by-cycle failed for impeller {imp}", impeller);
+            return StatusCode(500, new { error = "per-cycle amps query failed" });
+        }
+    }
+
+    // One filtered calculation's impeller current: the tile average plus the per-cycle points
+    // behind each tile's chart. Same service as the local /api/filter/{id}/amps. Works for any
+    // request id — the one in Live().section2 or one returned by POST filter.
+    [HttpGet("filter/{id:int}/amps")]
+    public async Task<IActionResult> FilterAmps(int id)
+    {
+        try
+        {
+            var data = await _filter.GetAmpsDataAsync(id);
+            return Ok(data.Select(a => new
+            {
+                impellerNumber = a.ImpellerNumber,
+                overallAvgAmps = a.OverallAvgAmps,
+                cycles = a.Cycles.Select(c => new
+                {
+                    cycleNumber = c.CycleNumber,
+                    blastEnd    = ToUtc(c.BlastEnd),
+                    avgAmps     = c.AvgAmps
+                })
+            }));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "admin/filter/{id}/amps failed", id);
+            return StatusCode(500, new { error = "filtered amps query failed" });
         }
     }
 
@@ -361,7 +446,7 @@ public class AdminController : ControllerBase
             var section2 = await BuildSection2Async(
                 requestId, input.FilterBy, filterStart, filterEnd,
                 input.PeriodLabel, input.FilterCycleFrom, input.FilterCycleTo,
-                input.FilterMetalName, DateTime.UtcNow);
+                input.FilterMetalName, DateTime.UtcNow, input.SelectedParameters);
             return Ok(section2);
         }
         catch (Exception ex)

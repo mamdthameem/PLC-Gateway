@@ -3,6 +3,7 @@ import { Paper, Typography, Chip, Box, Tooltip } from '@mui/material';
 import LinkOffIcon from '@mui/icons-material/LinkOff';
 import { fetchMachineStatus } from '../services/machineStatusService';
 import type { MachineStatus } from '../types';
+import { formatStamp } from '../utils/formatters';
 
 const POLL_MS = 5000;
 
@@ -99,7 +100,7 @@ export default function MachineStatusTile() {
 
       {status?.lastUpdated && (
         <Typography variant="caption" sx={{ color: 'text.disabled', fontSize: '0.62rem', mt: 'auto' }}>
-          {new Date(status.lastUpdated).toLocaleTimeString()}
+          {formatStamp(status.lastUpdated)}
         </Typography>
       )}
     </Paper>

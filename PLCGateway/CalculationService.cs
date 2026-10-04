@@ -264,8 +264,15 @@ public class CalculationService
     // Folds one refill-weight event: tracks the latest refill (any reason) for last_refill_epoch,
     // and for actual change events maintains the refill count/first-time and appends a shots-
     // breakdown row (blast rising edges since the previous refill).
+    //
+    // A row with no numeric value is not a reading of the refill weight at all, so it is skipped
+    // entirely. An early gateway build stored this DINT tag as a BOOL: 299 rows on 2026-01-21 read
+    // "False" → "False" under reason COV. Counted as refills, they drew 299 empty bars on the shots
+    // chart and dragged avg_shot_refill_time_sec down. ShotsBreakdownService applies the same rule.
     private async Task FoldRefillAsync(AggregationState s, AggEvent ev)
     {
+        if (ev.ValueNum is null) return;
+
         if (s.LastRefillAnyTs == null || ev.Timestamp > s.LastRefillAnyTs.Value)
             s.LastRefillAnyTs = ev.Timestamp;
 
@@ -488,7 +495,7 @@ public class CalculationService
                       || want.Contains("machine_utility_pct");
         if (!needBlast) return result;
 
-        var blastRecords = await _db.GetStateChangesAsync(TAG_BLAST, start, end);
+        var blastRecords = await _db.GetStateChangesAsync(TAG_BLAST, start, end, includeStart: true);
 
         double blastSec = ComputeOnTimeSeconds(blastRecords, start, end,
             isOn: v => v == "1" || v?.ToLower() == "true");
@@ -584,7 +591,7 @@ public class CalculationService
 
     private async Task<double> ComputeMachineOnTimeSecondsAsync(DateTime start, DateTime end)
     {
-        var records = await _db.GetStateChangesAsync(TAG_MACHINE_ST, start, end);
+        var records = await _db.GetStateChangesAsync(TAG_MACHINE_ST, start, end, includeStart: true);
         return ComputeOnTimeSeconds(records, start, end, isOn: v => v != null && v != "0");
     }
 
@@ -603,9 +610,12 @@ public class CalculationService
     {
         if (records.Count == 0) return 0;
 
+        // Already on when the window opened ⇒ the on-segment runs from the window start. Starting it
+        // at the first record instead dropped everything between the two, e.g. the whole of a
+        // cycle whose rising edge sat exactly on the window start.
         double totalSec  = 0;
         bool currentlyOn = isOn(records[0].PreviousValue);
-        DateTime segStart = currentlyOn ? records[0].Timestamp : windowStart;
+        DateTime segStart = windowStart;
 
         foreach (var r in records)
         {

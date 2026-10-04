@@ -134,7 +134,8 @@ using (var scope = app.Services.CreateScope())
         {
             await db.ResetAggregationStateAsync();
             await db.ResetDailyTrendsAsync();
-            logger.LogWarning("Aggregation state + daily trend rollup reset — both rebuild from full history.");
+            await db.ResetShotsBreakdownAsync();
+            logger.LogWarning("Aggregation state, daily trend rollup and shots breakdown reset — all rebuild from full history.");
         }
         catch (Exception ex) { logger.LogError(ex, "Failed to reset aggregation state."); }
     }

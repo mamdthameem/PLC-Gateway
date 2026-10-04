@@ -47,6 +47,17 @@ export function formatKg(val: number): string {
   return `${val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kg`;
 }
 
+/**
+ * The item name to show for one declared slot. A weight declared with a blank name is counted as
+ * "unspecified" in the Production by Item table (CalculationService.SumDeclaredItemWeights), so
+ * the per-cycle views name it the same way — otherwise that weight appears in the item total with
+ * no cycle row accounting for it. Null when the slot declared nothing at all.
+ */
+export function declaredItemName(name: string | null, kg: number | null): string | null {
+  if (name) return name;
+  return kg != null && kg > 0 ? 'unspecified' : null;
+}
+
 export function formatHours(val: number): string {
   if (!isFinite(val) || val < 0) return '—';
   const h = Math.floor(val);

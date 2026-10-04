@@ -13,4 +13,6 @@ public class FilteredRequestInfoDto
     public int? FilterCycleTo { get; set; }
     public string? FilterMetalName { get; set; }
     public DateTime? ProcessedAt { get; set; }
+    // calculation_requests.selected_parameters — null means every parameter was computed.
+    public string[]? SelectedParameters { get; set; }
 }

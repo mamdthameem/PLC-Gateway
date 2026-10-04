@@ -7,6 +7,7 @@ import BarChartIcon from '@mui/icons-material/BarChart';
 import CloseIcon from '@mui/icons-material/Close';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import { formatParameterValue, PARAM_META } from '../utils/unitConverters';
+import { formatStamp } from '../utils/formatters';
 
 interface Props {
   parameterName: string;
@@ -110,7 +111,7 @@ export default function ExpandableMetricCard({
 
         {updatedAt && (
           <Typography variant="caption" sx={{ color: 'text.disabled', fontSize: '0.62rem', mt: 'auto' }}>
-            {new Date(updatedAt).toLocaleTimeString()}
+            {formatStamp(updatedAt)}
           </Typography>
         )}
       </Paper>

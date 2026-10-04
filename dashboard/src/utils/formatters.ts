@@ -48,3 +48,22 @@ export const formatNumber = (
   if (Number.isNaN(numberValue)) return String(value);
   return new Intl.NumberFormat(undefined, options).format(numberValue);
 };
+
+/**
+ * A tile's "as of" stamp: the clock time alone when it is today, otherwise prefixed with the date
+ * ("14 May, 15:29:33"; the year too when it is not this year). A bare time on a reading that is
+ * months old — the last scan before a PLC disconnect, say — reads as if it were taken today.
+ */
+export const formatStamp = (value: DateInput): string => {
+  const date = toDate(value);
+  if (!date) return 'N/A';
+  const time = date.toLocaleTimeString();
+  const now = new Date();
+  if (date.toDateString() === now.toDateString()) return time;
+  const day = date.toLocaleDateString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    ...(date.getFullYear() !== now.getFullYear() ? { year: 'numeric' } : {}),
+  });
+  return `${day}, ${time}`;
+};

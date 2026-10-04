@@ -12,8 +12,11 @@ import { IMPELLER_SELECTION_CHANGED } from '../services/settingsService';
 const POLL_MS          = 10_000;
 const POPUP_COOLDOWN   = 30 * 60 * 1000; // 30 minutes
 /** Column widths. The table's overall width is budgeted from these and the impeller count. */
-const SPARE_COL_WIDTH    = 220;
+const SPARE_COL_WIDTH    = 190;
+/** Widest an impeller column grows to — the budget. Columns shrink below it to fit the page. */
 const IMPELLER_COL_WIDTH = 190;
+/** Narrowest an impeller column shrinks to before the table scrolls sideways (phone widths). */
+const IMPELLER_COL_MIN   = 104;
 
 // Impeller columns are derived from the rows the API returns, never assumed. The gateway serves
 // only the selected impellers (gateway_settings), so deselecting one removes its column without
@@ -146,9 +149,15 @@ export default function SpareHealthTable() {
           `fit-content` was the previous rule and it made a 2-impeller table cramped: it collapsed
           to the narrowest layout the content allowed, so "260.8 hrs / 300.0 hrs" sat in a ~110 px
           column. Growing to the full page width is the opposite failure — three columns stretched
-          across a wide monitor. Budgeting a width per impeller gives each cell room to breathe,
-          leaves the block narrow enough for `mx: auto` to actually centre it, and still scrolls
-          horizontally once there are enough impellers to overflow. */}
+          across a wide monitor. Budgeting a width per impeller gives each cell room to breathe
+          and leaves the block narrow enough for `mx: auto` to actually centre it.
+
+          The budget is a MAXIMUM. Each impeller column used to carry it as a minWidth too, so nine
+          impellers needed 1 930 px and pushed Impellers 9 and 10 behind a horizontal scrollbar on
+          an ordinary desktop. With a fixed layout the impeller columns now share whatever width
+          the page has, down to IMPELLER_COL_MIN, and a cell wraps onto two lines ("12.0 hrs" over
+          "/ 300.0 hrs") rather than overflowing. Only below that floor — phone widths — does the
+          table scroll. */}
       <TableContainer
         component={Paper}
         variant="outlined"
@@ -159,12 +168,16 @@ export default function SpareHealthTable() {
           mx: 'auto',
         }}
       >
-        <Table size="small" stickyHeader>
+        <Table
+          size="small"
+          stickyHeader
+          sx={{ tableLayout: 'fixed', minWidth: SPARE_COL_WIDTH + impellers.length * IMPELLER_COL_MIN }}
+        >
           <TableHead>
             <TableRow>
-              <TableCell sx={{ fontWeight: 700, minWidth: SPARE_COL_WIDTH }}>Spare Part</TableCell>
+              <TableCell sx={{ fontWeight: 700, width: SPARE_COL_WIDTH }}>Spare Part</TableCell>
               {impellers.map(i => (
-                <TableCell key={i} align="center" sx={{ fontWeight: 700, minWidth: IMPELLER_COL_WIDTH }}>
+                <TableCell key={i} align="center" sx={{ fontWeight: 700, px: 1 }}>
                   Impeller {i}
                 </TableCell>
               ))}
@@ -182,23 +195,30 @@ export default function SpareHealthTable() {
                   const triggered   = c.triggerActive;
                   const replaced    = c.lastReplacedAt !== null;
 
+                  // Two unbreakable halves, so a narrow column can only wrap between them — never
+                  // leave "hrs" stranded on a line of its own.
                   const runStr = formatRunHours(c.currentRunHours);
-                  const display = noThreshold
-                    ? runStr
-                    : `${runStr} / ${formatRunHours(c.thresholdHours)}`;
 
                   return (
                     <TableCell
                       key={i}
                       align="center"
-                      sx={{ bgcolor: triggered ? 'error.light' : 'inherit', verticalAlign: 'middle' }}
+                      sx={{ bgcolor: triggered ? 'error.light' : 'inherit', verticalAlign: 'middle', px: 1 }}
                     >
                       <Typography
                         variant="caption"
                         display="block"
                         sx={{ fontWeight: triggered ? 700 : 400, fontSize: '0.72rem' }}
                       >
-                        {display}
+                        <Box component="span" sx={{ whiteSpace: 'nowrap' }}>{runStr}</Box>
+                        {!noThreshold && (
+                          <>
+                            {' '}
+                            <Box component="span" sx={{ whiteSpace: 'nowrap' }}>
+                              / {formatRunHours(c.thresholdHours)}
+                            </Box>
+                          </>
+                        )}
                       </Typography>
                       {triggered && (
                         <Chip label="!" color="error" size="small"
