@@ -500,6 +500,27 @@ window.
 
 ---
 
+## A heartbeat row is a reading, not an event (fixed 2026-10-04)
+
+`DataCollection:HeartbeatTags` includes `Blast ON/OFF` and `Refil shots weight`, so a live gateway
+writes a Tier 2 row for them every 60 s **even when the value has not changed**. Anything that asks
+"when did this last happen?" must therefore filter on the change, never take the newest row. Two
+places got this wrong; both were invisible here because this dev database predates the heartbeat
+(its `Blast ON/OFF` rows are all `STATE_CHANGE`), and both would have appeared on the first live
+blast:
+
+| Was | Now |
+| --- | --- |
+| `blast_start` = newest TRUE row before the falling edge — i.e. the last heartbeat, so a 10-minute blast was recorded as ~60 s, and `duration_sec`, `energy_kwh` and `energy_kwh_total` with it | `DatabaseService.GetRunStartTimestampBeforeAsync` — the start of the unbroken ON run ending at the falling edge, anchored on the last OFF row (a forced `DISCONNECT` OFF counts as off). No earlier OFF row at all ⇒ earliest ON row, so a gateway started mid-blast still records the cycle |
+| `last_refill_epoch_sec` = newest refill-weight row of **any** reason, so the heartbeat pinned the "Last Shot Refill" tile to roughly now | `FoldRefillAsync` takes the newest **change** row only (`RefillChangeReasons`). `AggregationState.LastRefillAnyTs` and the `last_refill_any_ts` column keep their names |
+
+Verified: the new run-start rule reproduces all five recorded `blast_start` values exactly, and on a
+simulated 10-minute blast carrying nine heartbeat rows it returns the rising edge where the old rule
+returned the last heartbeat. **Do not "simplify" either query back to an `ORDER BY timestamp DESC
+LIMIT 1`.**
+
+---
+
 ## Impeller selection (`gateway_settings.selected_impellers`)
 
 Which impellers the site includes, picked with the number buttons in the **Live Impeller Current**
