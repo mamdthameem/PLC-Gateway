@@ -62,8 +62,9 @@ public class CycleTrackingService : BackgroundService
 
                     DateTime blastEnd = record.Timestamp;
 
-                    // Find when this blast started (last TRUE record before blastEnd)
-                    DateTime? blastStart = await _db.GetLastTrueTimestampBeforeAsync(TAG_BLAST, blastEnd);
+                    // Find when this blast started: the beginning of the unbroken ON run that ends
+                    // here, NOT the newest ON row — on a live gateway that row is a 60 s heartbeat.
+                    DateTime? blastStart = await _db.GetRunStartTimestampBeforeAsync(TAG_BLAST, blastEnd);
                     if (blastStart == null)
                     {
                         _logger.LogWarning("Could not find blast_start for cycle ending at {end} — skipping.", blastEnd);

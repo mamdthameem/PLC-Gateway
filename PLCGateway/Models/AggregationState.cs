@@ -25,6 +25,11 @@ public sealed class AggregationState
     public long RefillCount { get; set; }
     public DateTime? FirstRefillChangeTs { get; set; }
     public DateTime? PrevRefillChangeTs { get; set; }
+    /// <summary>
+    /// Backs last_refill_epoch_sec. Despite the name (and the last_refill_any_ts column, both kept
+    /// so stored state stays readable), this is the last refill CHANGE event: a 60 s heartbeat row
+    /// on an unchanged weight is not a refill and used to pin the tile to roughly now.
+    /// </summary>
     public DateTime? LastRefillAnyTs { get; set; }
 
     // Running sum of refill weight (real change events only, positive values), for

@@ -261,22 +261,28 @@ public class CalculationService
         s.MachineOn = newState;
     }
 
-    // Folds one refill-weight event: tracks the latest refill (any reason) for last_refill_epoch,
-    // and for actual change events maintains the refill count/first-time and appends a shots-
-    // breakdown row (blast rising edges since the previous refill).
+    // Folds one refill-weight event: tracks the latest refill for last_refill_epoch, and maintains
+    // the refill count/first-time and a shots-breakdown row (blast rising edges since the previous
+    // refill).
     //
     // A row with no numeric value is not a reading of the refill weight at all, so it is skipped
     // entirely. An early gateway build stored this DINT tag as a BOOL: 299 rows on 2026-01-21 read
     // "False" → "False" under reason COV. Counted as refills, they drew 299 empty bars on the shots
     // chart and dragged avg_shot_refill_time_sec down. ShotsBreakdownService applies the same rule.
+    //
+    // Only a CHANGE event is a refill. last_refill_epoch_sec used to take the newest row of any
+    // reason, but `Refil shots weight` is a heartbeat tag (DataCollection:HeartbeatTags), so a live
+    // gateway writes an unchanged PERIODIC row every 60 s — which pinned the "Last Shot Refill"
+    // tile to roughly the current time no matter when the hopper was last filled. The heartbeat
+    // stays: it is what proves the value was still being read.
     private async Task FoldRefillAsync(AggregationState s, AggEvent ev)
     {
         if (ev.ValueNum is null) return;
 
+        if (!RefillChangeReasons.Contains(ev.StorageReason)) return;
+
         if (s.LastRefillAnyTs == null || ev.Timestamp > s.LastRefillAnyTs.Value)
             s.LastRefillAnyTs = ev.Timestamp;
-
-        if (!RefillChangeReasons.Contains(ev.StorageReason)) return;
 
         s.RefillCount++;
         s.FirstRefillChangeTs ??= ev.Timestamp;

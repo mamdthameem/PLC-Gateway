@@ -270,18 +270,35 @@ public class DatabaseService
         return results;
     }
 
-    // Returns the timestamp of the last TRUE value for a BOOL tag before a given moment.
-    // Used by CycleTrackingService to find blast_start when a falling edge is detected.
-    public async Task<DateTime?> GetLastTrueTimestampBeforeAsync(string parameterName, DateTime before)
+    // Where the unbroken run of TRUE rows that ends at `before` began — i.e. blast_start for the
+    // cycle whose falling edge is at `before`. Used by CycleTrackingService.
+    //
+    // This used to be "the newest TRUE row before `before`", which is only the rising edge when no
+    // other row was written during the blast. `Blast ON/OFF` is a heartbeat tag (appsettings
+    // DataCollection:HeartbeatTags), so a live gateway writes a TRUE row every 60 s for the whole
+    // blast — making the newest TRUE row the LAST heartbeat. Every blast longer than a minute would
+    // have been recorded as roughly 60 seconds, with duration_sec and energy_kwh wrong to match.
+    //
+    // Anchoring on the last FALSE row instead is independent of how many rows the blast wrote: the
+    // run start is the earliest TRUE row after the blast was last off. A forced DISCONNECT OFF row
+    // counts as off, which is what we want — the gap it marks is not measured runtime. With no
+    // FALSE row at all (the tag has been on since the first row ever recorded) this falls back to
+    // the earliest TRUE row rather than returning nothing.
+    public async Task<DateTime?> GetRunStartTimestampBeforeAsync(string parameterName, DateTime before)
     {
         DateTime? result = null;
 
         const string sql = @"
-            SELECT timestamp FROM plc_historical_data
+            SELECT MIN(timestamp) FROM plc_historical_data
             WHERE parameter_name = @name
-              AND (value_bool IS TRUE OR value = '1' OR value = 'True' OR value = 'true')
               AND timestamp < @before
-            ORDER BY timestamp DESC LIMIT 1";
+              AND (value_bool IS TRUE OR value = '1' OR lower(value) = 'true')
+              AND timestamp > COALESCE((
+                    SELECT MAX(timestamp) FROM plc_historical_data
+                    WHERE parameter_name = @name
+                      AND timestamp < @before
+                      AND (value_bool IS FALSE OR value = '0' OR lower(value) = 'false')
+                  ), '-infinity'::timestamp)";
 
         await RetryAsync(async conn =>
         {
@@ -291,7 +308,7 @@ public class DatabaseService
             var scalar = await cmd.ExecuteScalarAsync();
             if (scalar != null && scalar != DBNull.Value)
                 result = Convert.ToDateTime(scalar);
-        }, $"GetLastTrueTimestampBefore {parameterName}");
+        }, $"GetRunStartTimestampBefore {parameterName}");
 
         return result;
     }
