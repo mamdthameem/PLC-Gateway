@@ -9,6 +9,9 @@
 
     psql may first ask for the PostgreSQL password of the 'postgres' user.
 
+    This is for the development PC. On an INSTALLED gateway use the program itself instead, from an
+    administrator command prompt in its folder:  PLCGateway.exe --set-password
+
 .EXAMPLE
     .\tools\Set-DashboardPassword.ps1 -Username sreesakthi
 #>
@@ -45,10 +48,16 @@ if ($NewPassword) {
 }
 if ($password.Length -lt $MinLength) { throw "Too short: use at least $MinLength characters. Nothing was changed." }
 
-# The same hash the gateway checks at login (PasswordHasher.Hash): SHA-256 of the UTF-8 bytes,
-# written as lowercase hex. Only hex digits, so it is safe to put straight into the SQL below.
-$sha  = [Security.Cryptography.SHA256]::Create()
-$hash = -join ($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($password)) | ForEach-Object { $_.ToString('x2') })
+# The same format the gateway writes (PasswordHasher.Hash in PLCGateway/Api/Services):
+#   pbkdf2-sha256$<iterations>$<salt base64>$<hash base64>
+# PBKDF2-HMAC-SHA256, 600 000 iterations, 16-byte random salt, 32-byte hash. Base64 and digits only,
+# so it is safe to put straight into the SQL below. Keep the numbers in step with PasswordHasher.
+$iterations = 600000
+$salt = New-Object byte[] 16
+[Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($salt)
+$kdf  = New-Object Security.Cryptography.Rfc2898DeriveBytes($password, $salt, $iterations, [Security.Cryptography.HashAlgorithmName]::SHA256)
+$hash = 'pbkdf2-sha256$' + $iterations + '$' + [Convert]::ToBase64String($salt) + '$' + [Convert]::ToBase64String($kdf.GetBytes(32))
+$kdf.Dispose()
 $password = $null; $again = $null
 
 $updated = & $Psql -U $DbUser -h localhost -d $Database -q -At -c "UPDATE users SET password_hash = '$hash' WHERE username = '$Username' RETURNING id;"

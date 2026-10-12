@@ -1,5 +1,5 @@
 import React from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { Box, CircularProgress } from '@mui/material';
 import { useAuth } from '../contexts/AuthContext';
 import type { UserRole } from '../types';
@@ -14,6 +14,7 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   requiredRole,
 }) => {
   const { user, isLoading } = useAuth();
+  const location = useLocation();
 
   if (isLoading) {
     return (
@@ -24,7 +25,9 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   }
 
   if (!user) {
-    return <Navigate to="/login" replace />;
+    // Remember where the user was going - including a ?result=<id> filter link - so signing in
+    // returns there instead of to a blank dashboard.
+    return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
   }
 
   if (requiredRole && user.role !== requiredRole) {

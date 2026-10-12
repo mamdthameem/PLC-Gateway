@@ -7,7 +7,10 @@ public interface IUserService
 {
     Task<AppUser?> FindByLoginAsync(string loginId);
     Task<bool> AnyUsersAsync();
-    Task InsertUserAsync(string username, string email, string fullName, string passwordHash, string role, DateTime? validUntilUtc);
+    /// <returns>False when a user with that username already exists (nothing is changed).</returns>
+    Task<bool> InsertUserAsync(string username, string email, string fullName, string passwordHash, string role, DateTime? validUntilUtc);
+    /// <returns>False when no user has that username.</returns>
+    Task<bool> UpdatePasswordHashAsync(string username, string passwordHash);
 }
 
 // Raw-Npgsql user store for local dashboard login (replaces the EF MasterDbContext).
@@ -62,7 +65,7 @@ public class UserService : IUserService
         return scalar is bool b && b;
     }
 
-    public async Task InsertUserAsync(string username, string email, string fullName,
+    public async Task<bool> InsertUserAsync(string username, string email, string fullName,
         string passwordHash, string role, DateTime? validUntilUtc)
     {
         const string sql = @"
@@ -78,6 +81,17 @@ public class UserService : IUserService
         cmd.Parameters.AddWithValue("p", passwordHash);
         cmd.Parameters.AddWithValue("r", role);
         cmd.Parameters.AddWithValue("v", (object?)validUntilUtc ?? DBNull.Value);
-        await cmd.ExecuteNonQueryAsync();
+        return await cmd.ExecuteNonQueryAsync() == 1;
+    }
+
+    public async Task<bool> UpdatePasswordHashAsync(string username, string passwordHash)
+    {
+        const string sql = "UPDATE users SET password_hash = @p WHERE lower(username) = lower(@u)";
+        await using var conn = new NpgsqlConnection(_connectionString);
+        await conn.OpenAsync();
+        await using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("p", passwordHash);
+        cmd.Parameters.AddWithValue("u", username);
+        return await cmd.ExecuteNonQueryAsync() > 0;
     }
 }

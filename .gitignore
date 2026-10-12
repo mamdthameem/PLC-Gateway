@@ -17,3 +17,7 @@
 
 ## Secrets for one install (Jwt:Key, Admin:ApiKey, License:Key) - never commit
 appsettings.Production.json
+
+# Installer build output (installer/build.ps1). Regenerated on every build.
+installer/staging/
+installer/output/

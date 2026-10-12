@@ -42,8 +42,8 @@ public class AdminController : ControllerBase
         CalculationService calculation,
         ImpellerSelection impellers)
     {
-        _connectionString = config.GetValue<string>("PostgreSQL:ConnectionString")
-            ?? config.GetConnectionString("PostgresDb")
+        _connectionString = config.GetConnectionString("PostgresDb")
+            ?? config.GetValue<string>("PostgreSQL:ConnectionString")
             ?? throw new InvalidOperationException("Connection string is required.");
         _logger = logger;
         _machineStatus = machineStatus;
@@ -66,9 +66,9 @@ public class AdminController : ControllerBase
 
     private static DateTime? ToUtc(DateTime? ts) => ts.HasValue ? ToUtc(ts.Value) : null;
 
-    // Shared by Live()'s "latest completed" mirror and POST /api/admin/filter's synchronous
-    // result — same shape either way, since both are just "the state of one calculation_requests
-    // row plus its child tables."
+    // Shared by POST /api/admin/filter's synchronous result and GET /api/admin/filter/{id} - same
+    // shape either way, since both are just "the state of one calculation_requests row plus its
+    // child tables."
     private async Task<object> BuildSection2Async(
         int requestId, string filterBy, DateTime filterStart, DateTime filterEnd,
         string? periodLabel, int? filterCycleFrom, int? filterCycleTo, string? filterMetalName,
@@ -147,8 +147,8 @@ public class AdminController : ControllerBase
         lastUpdatedAt   = ToUtc(s.LastUpdatedAt)
     };
 
-    // Live snapshot: everything the local Section 1 dashboard renders, plus the latest
-    // completed Section 2 (filtered) view. All values are the dashboard services' outputs.
+    // Live snapshot: everything the local Section 1 dashboard renders. All values are the dashboard
+    // services' outputs. No Section 2 here: filtered results belong to the viewer who asked for them.
     [HttpGet("live")]
     public async Task<IActionResult> Live()
     {
@@ -179,19 +179,10 @@ public class AdminController : ControllerBase
             var spareGrid = await _spares.GetAllAsync();
             var alerts    = await _spares.GetAlertsAsync();
 
-            // Latest completed Section 2 request, mirrored with the same read paths the
-            // dashboard's FilterResultsView uses. Null until the first filter completes.
-            // "Latest" includes requests the cloud itself submitted via POST /api/admin/filter —
-            // there is one calculation_requests table, shared by both callers.
-            object? section2 = null;
-            var latest = await _filter.GetLatestCompletedAsync();
-            if (latest is not null)
-            {
-                section2 = await BuildSection2Async(
-                    latest.RequestId, latest.FilterBy, latest.FilterStart, latest.FilterEnd,
-                    latest.PeriodLabel, latest.FilterCycleFrom, latest.FilterCycleTo,
-                    latest.FilterMetalName, latest.ProcessedAt, latest.SelectedParameters);
-            }
+            // BREAKING (2026-10-12, see CONTRACT-admin-api.md): /live no longer carries section2,
+            // the "latest completed filter from anyone". Every viewer polling /live was handed
+            // whatever filter someone else had just applied. A viewer now sees only its own result:
+            // the response of its own POST /api/admin/filter, or GET /api/admin/filter/{id} later.
 
             return Ok(new
             {
@@ -240,8 +231,7 @@ public class AdminController : ControllerBase
                     lastUpdated   = ToUtc(a.LastUpdated)
                 }),
                 spareGrid   = spareGrid.Select(ToSpareJson),
-                spareAlerts = alerts.Select(ToSpareJson),
-                section2
+                spareAlerts = alerts.Select(ToSpareJson)
             });
         }
         catch (Exception ex)
@@ -332,7 +322,7 @@ public class AdminController : ControllerBase
 
     // One filtered calculation's impeller current: the tile average plus the per-cycle points
     // behind each tile's chart. Same service as the local /api/filter/{id}/amps. Works for any
-    // request id — the one in Live().section2 or one returned by POST filter.
+    // request id - one returned by POST filter, or reopened with GET filter/{id}.
     [HttpGet("filter/{id:int}/amps")]
     public async Task<IActionResult> FilterAmps(int id)
     {
@@ -358,6 +348,29 @@ public class AdminController : ControllerBase
         }
     }
 
+    // One saved filtered calculation by id, in the same shape as the POST filter response. For a
+    // viewer reopening its own result (e.g. after a page refresh) without recomputing it. 404 when
+    // there is no such id; 409 with the status while it is still pending, processing or failed.
+    [HttpGet("filter/{id:int}")]
+    public async Task<IActionResult> GetFilterResult(int id)
+    {
+        try
+        {
+            var r = await _filter.GetRequestAsync(id);
+            if (r is null) return NotFound(new { error = $"request {id} not found" });
+            if (r.Status != "done") return Conflict(new { error = "request is not complete", requestId = id, status = r.Status });
+
+            return Ok(await BuildSection2Async(
+                r.RequestId, r.FilterBy, r.FilterStart, r.FilterEnd, r.PeriodLabel,
+                r.FilterCycleFrom, r.FilterCycleTo, r.FilterMetalName, r.ProcessedAt, r.SelectedParameters));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "admin/filter/{id} failed", id);
+            return StatusCode(500, new { error = "filter result query failed" });
+        }
+    }
+
     // Synchronous, cloud-triggered filtered calculation — no calculation_requests polling wait.
     // Computes inline with the same CalculationService.ComputeFilteredParametersAsync the 5-second
     // background poller uses, so there is exactly one implementation of the math either way.
@@ -367,10 +380,9 @@ public class AdminController : ControllerBase
     // poller — which only picks up 'pending' rows — can never also grab this one and double-write
     // plc_filtered_cycle_data / plc_filtered_metal_production for the same request_id.
     //
-    // Side effect worth knowing: this reuses the same calculation_requests table the local
-    // dashboard's async flow uses, so a cloud-triggered filter becomes the new "latest completed"
-    // row and is what Live().section2 mirrors afterward, until a different filter is computed by
-    // either side. That is intentional — one shared source of truth — not an oversight.
+    // It reuses the calculation_requests table the local dashboard's async flow uses (the DB is the
+    // Section 2 message bus), but nothing reads "the latest" request any more: the caller gets its
+    // own result in the response and can fetch it again by id.
     [HttpPost("filter")]
     public async Task<IActionResult> Filter([FromBody] FilterRequestInput input)
     {

@@ -1,10 +1,13 @@
 namespace PlcApi.Models;
 
-// Metadata of a completed Section 2 calculation request (one calculation_requests row).
-// Used by the admin live snapshot to mirror the latest filtered view without recomputing.
+// One saved Section 2 calculation request (one calculation_requests row): what was asked for and
+// where it stands. Looked up BY ID only - by the dashboard reopening a result from its URL, and by
+// GET /api/admin/filter/{id}. There is deliberately no "latest" lookup any more: one viewer must
+// never be handed the filter another viewer applied (see CONTRACT-admin-api.md, 2026-10-12).
 public class FilteredRequestInfoDto
 {
     public int RequestId { get; set; }
+    public string Status { get; set; } = "pending";   // pending | processing | done | error
     public string FilterBy { get; set; } = "time";
     public DateTime FilterStart { get; set; }
     public DateTime FilterEnd { get; set; }

@@ -1,5 +1,10 @@
 # PLCGateway — Deployment Notes (IIS)
 
+> **For client PCs, use the installer instead** (`installer/README.md`). It sets up Windows services,
+> a private PostgreSQL and the Cloudflare tunnel with no IIS, certificate or port forwarding. These IIS
+> notes still work, for a server where IIS hosting is wanted. Note that the gateway now migrates its
+> own database on start, and there is no default login: create one with `PLCGateway.exe --create-admin`.
+
 The gateway is a single ASP.NET Core (.NET 10) application that runs the PLC pipeline, the
 dashboard API, and the dashboard static files (React build in `wwwroot/`) in one process, hosted
 under IIS on the client's server. The cloud reaches this app only over HTTPS via the secured

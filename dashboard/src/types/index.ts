@@ -201,6 +201,25 @@ export interface FilterStatus {
   processedAt?: string | null;
 }
 
+/**
+ * One saved request (GET /api/filter/{id}): what was asked for and where it stands. Used to reopen
+ * a result named in the page's URL. Times carry the gateway's offset, e.g. "…T00:00:00+05:30".
+ * `selectedParameters` null means every parameter was computed.
+ */
+export interface FilterRequestInfo {
+  requestId: number;
+  status: FilterStatus['status'];
+  filterBy: 'time' | 'cycle' | 'metal';
+  filterStart: string;
+  filterEnd: string;
+  periodLabel: string | null;
+  filterCycleFrom: number | null;
+  filterCycleTo: number | null;
+  filterMetalName: string | null;
+  selectedParameters: string[] | null;
+  processedAt: string | null;
+}
+
 export interface FilterResult {
   parameterName: string;
   value: string;

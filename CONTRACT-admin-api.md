@@ -14,12 +14,45 @@ Any change to that controller must update this file and `sample-response.json` i
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `GET` | `/api/admin/live` | Full live snapshot — Section 1 + last completed Section 2 |
+| `GET` | `/api/admin/live` | Live snapshot — Section 1 only (Section 2 was removed from it on 2026-10-12) |
 | `GET` | `/api/admin/trends` | Bucketed graph series behind every tile chart except the per-cycle and per-item ones |
 | `GET` | `/api/admin/amps/by-cycle` | One impeller's average current per completed cycle, all history — the chart behind a live impeller tile |
 | `POST` | `/api/admin/filter` | Trigger a Section 2 filtered calculation synchronously, get the full result back in one response |
+| `GET` | `/api/admin/filter/{id}` | One saved Section 2 result by its `requestId` — to show it again (e.g. after a page refresh) without recomputing |
 | `GET` | `/api/admin/filter/{id}/amps` | One filtered calculation's impeller current — tile averages plus the per-cycle chart points |
 | `GET` | `/api/admin/history` | Raw recorded readings of one tag, oldest first, in pages |
+
+## Changes on 2026-10-12 — BREAKING: `section2` removed from `/live`
+
+**What changed**
+
+| | Before | Now |
+| --- | --- | --- |
+| `GET /api/admin/live` | had `section2`: the **latest completed filter, from anyone** | **no `section2` field at all** |
+| Showing a filter result | read `live.section2` | use the response of **your own** `POST /api/admin/filter` |
+| Showing it again later (refresh, reopening a link) | — | **new** `GET /api/admin/filter/{requestId}`, same shape as the `POST` response |
+
+**Why.** `section2` was whichever filter had been applied most recently, by any viewer of the gateway
+dashboard or the cloud. Every page polling `/live` was therefore handed the filter someone else had
+just applied, so one person's filter appeared on everyone's screen. A filter is now private to the
+viewer who applied it.
+
+**What the cloud must do**
+
+1. Stop reading `live.section2`. It is gone; reading it gives `undefined`, not an error.
+2. Keep the applied filter per viewer, per browser tab — in the page's own state and in its URL,
+   never in shared storage (no Firestore document per client, no server-side "current filter").
+   Two people looking at the same client must be able to filter independently.
+3. On Apply, call `POST /api/admin/filter` and show **its response**. Put the returned `requestId`
+   in the page URL (for example `?result=123`) together with the filter.
+4. When a page opens with a `requestId` in its URL, fetch `GET /api/admin/filter/{requestId}` and
+   show that, without calling `POST` again. `404` → the result no longer exists: show the filter
+   and ask the user to apply it again. `409` → it is not finished (or failed); see that endpoint.
+5. Default, when no filter is in the URL: no filter applied; Section 2 shows the Section 1 values,
+   as before. The same for everyone.
+
+Nothing else in `/live` changed, and `POST /api/admin/filter` is unchanged except that it no longer
+affects what anyone else sees.
 
 ## Changes on 2026-09-19
 
@@ -106,8 +139,7 @@ Render as delivered. Parse to number only for formatting/plotting — never for 
   "amps":            [ … ],
   "ampsLastCycle":   [ … ],
   "spareGrid":       [ … ],
-  "spareAlerts":     [ … ],
-  "section2":        { … } | null
+  "spareAlerts":     [ … ]
 }
 ```
 
@@ -125,7 +157,6 @@ Render as delivered. Parse to number only for formatting/plotting — never for 
 | `ampsLastCycle` | array | Each selected impeller's average current over the **last completed cycle** — the "ran at N A" line. Added 2026-09-19; additive |
 | `spareGrid` | array | Spare-health grid, 14 entries per **selected** impeller (140 with all ten) |
 | `spareAlerts` | array | Subset of `spareGrid` where `triggerActive` is true and `thresholdHours > 0` |
-| `section2` | object, nullable | Latest **completed** filtered calculation — from either side, see below (null until one exists) |
 
 **Disconnected semantics:** when `plcConnected` is `false`, `machineStatus.value` is an
 authoritative forced `"0"` (machine treated as OFF), and `amps` / `spareGrid` hold the last values
@@ -245,19 +276,12 @@ Identical entry shape. `spareGrid` has 14 rows per selected impeller (140 with a
 | `lastReplacedAt` | string (timestamp), nullable | Last observed REPLACED rising edge; null if never observed |
 | `lastUpdatedAt` | string (timestamp) | Last upsert of this row |
 
-## `section2` — latest completed filtered calculation
+# The Section 2 result (`section2`)
 
-`null` until the first `calculation_requests` row reaches status `done`. Otherwise the request with
-the **highest id** whose status is `done`, mirrored with the same read paths the local
-FilterResultsView uses.
-
-**"Latest" is shared, not local-only.** `calculation_requests` is one table used by both the local
-dashboard's async flow (submit → poll) and the cloud's synchronous `POST /api/admin/filter` (below)
-— there is no separate table or flag distinguishing who triggered a request. If the cloud calls
-`POST /api/admin/filter`, that request becomes the new "latest completed" and is what `section2`
-shows on the next `Live()` call, until either side computes a different filter. This is intentional
-— one shared source of truth — not a bug to work around. The response shape below (this section)
-and `POST /api/admin/filter`'s response are identical field-for-field.
+**Not part of `/live` since 2026-10-12.** This is the object returned by `POST /api/admin/filter`
+and `GET /api/admin/filter/{id}` — identical field for field. It is called `section2` below and in
+the rest of this document. It describes one saved calculation (`calculation_requests` row
+`requestId`) and is only ever shown to the viewer who asked for it.
 
 ### Request metadata
 
@@ -339,7 +363,7 @@ Empty array (not `null`) when no cycle in scope declared any casting-metal weigh
 The "Impeller Current (Filtered)" tiles: one entry per impeller, ordered by `impellerNumber`.
 Empty when `impeller_current` was not selected. The per-cycle points behind each tile's chart are
 **not** here — fetch them from `GET /api/admin/filter/{requestId}/amps` when a tile is opened (over
-all history that is ~14 000 points, too many for every `Live()` poll). Added 2026-09-19; additive.
+all history that is ~14 000 points, too many to send with every result). Added 2026-09-19; additive.
 
 | Field | JSON type | Description |
 | --- | --- | --- |
@@ -441,20 +465,20 @@ empty if nothing cycle-derived was selected. This is not an error condition.
 blank/missing `filterMetalName`; an unrecognised entry in `selectedParameters` (the response carries
 `unknown` and `supported` arrays).
 
-**Response:** `200`, identical shape to `Live().section2` (see above) — `requestId`, `filterBy`,
+**Response:** `200`, the Section 2 result (`section2`, above) — `requestId`, `filterBy`,
 `filterStart`/`filterEnd`, `periodLabel`, `filterCycleFrom`/`filterCycleTo`, `filterMetalName`,
 `processedAt`, `selectedParameters`, `results[]`, `cycles[]`, `metals[]`, `amps[]`. **`shotsBreakdown[]` is no longer part of this
 response** (see above). No polling, no separate status check — the full result is in this one
 response.
 
 **Server failure:** `500 {"error": "...", "requestId": <id>}` if the request was recorded but
-computation or read-back failed — the `requestId` lets you cross-check `Live().section2` or retry.
+computation or read-back failed — the `requestId` lets you check it with `GET /api/admin/filter/{id}` or retry.
 `500 {"error": "failed to submit filter request"}` (no `requestId`) if the request couldn't even be
 recorded.
 
-**Side effect:** per the note under `section2` above, this becomes the new "latest completed" row —
-`Live().section2` will show this result on the next poll, until a different filter is computed by
-either side.
+**No side effect on anyone else.** The request is saved (the database is the Section 2 message bus,
+shared with the gateway dashboard), but nothing shows "the latest" request any more: only the
+caller sees this result. Keep `requestId` to show it again with `GET /api/admin/filter/{id}`.
 
 **Latency:** this endpoint used to be gated by an O(N)-database-round-trips-per-cycle loop in the
 `metal` case (one round trip per matching cycle, estimated at high-single-digit to low-tens of
@@ -471,6 +495,21 @@ not empirically measure a large-N case, and won't fabricate cycle/history rows t
 a benchmark). Re-benchmark against a realistic data volume before finalizing a hard timeout; a
 generous timeout (30–60s) is a safe starting point given the structural fix, not a number measured
 against real scale.
+
+---
+
+# `GET /api/admin/filter/{id}`
+
+One saved Section 2 result by its `requestId`, in exactly the shape `POST /api/admin/filter` returns.
+For a viewer reopening **its own** result — after a page refresh, or from a link holding the
+`requestId` — without computing it again. Added 2026-10-12.
+
+| Response | Meaning |
+| --- | --- |
+| `200` + the Section 2 result | done |
+| `404 {"error": "request <id> not found"}` | no such request |
+| `409 {"error": "request is not complete", "requestId": <id>, "status": "pending" \| "processing" \| "error"}` | still calculating (a dashboard-submitted request can take a few seconds), or it failed |
+| `500 {"error": "filter result query failed"}` | server failure |
 
 ---
 
@@ -499,8 +538,8 @@ Response: JSON array ordered by `cycleNumber` ascending.
 # `GET /api/admin/filter/{id}/amps`
 
 One filtered calculation's impeller current, including the per-cycle points behind each
-"Impeller Current (Filtered)" tile's chart. `{id}` is a `requestId` — from `Live().section2` or from
-a `POST /api/admin/filter` response. Same service as the local `/api/filter/{id}/amps`.
+"Impeller Current (Filtered)" tile's chart. `{id}` is a `requestId` — from a
+`POST /api/admin/filter` response or `GET /api/admin/filter/{id}`. Same service as the local `/api/filter/{id}/amps`.
 
 | Item | Value |
 | --- | --- |
@@ -601,8 +640,8 @@ A lock closes only the gateway's own dashboard. PLC recording and every calculat
 `sample-response.json` (repo root) is a full `GET /api/admin/live` response in exactly the shape
 described above, with realistic dummy values — including `impellers.selected`, all 140 `spareGrid`
 rows (all ten impellers selected), `amps` in impeller-number order, `ampsLastCycle`,
-`shotsBreakdown[].intervalStartTimestamp`, and `section2.metals[]` / `amps[]` /
-`selectedParameters` — usable
+and `shotsBreakdown[].intervalStartTimestamp`. It has no `section2` (removed from `/live` on
+2026-10-12) — usable
 directly as a fixture in the cloud app with no live connection. It does not include sample responses
 for `/api/admin/trends`, `/api/admin/filter` or `/api/admin/history` — the field tables above are
 authoritative for those.

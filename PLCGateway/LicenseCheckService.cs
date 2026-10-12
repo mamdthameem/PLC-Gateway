@@ -49,8 +49,8 @@ public class LicenseCheckService : BackgroundService
     {
         _logger = logger;
         _state  = state;
-        _connectionString = config.GetValue<string>("PostgreSQL:ConnectionString")
-            ?? config.GetConnectionString("PostgresDb")
+        _connectionString = config.GetConnectionString("PostgresDb")
+            ?? config.GetValue<string>("PostgreSQL:ConnectionString")
             ?? throw new InvalidOperationException("Connection string is required.");
 
         var url = config["License:CheckUrl"]?.Trim();

@@ -10,7 +10,7 @@ import {
 } from '@mui/material';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../contexts/AuthContext';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import PersonOutlineIcon from '@mui/icons-material/PersonOutline';
 import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
 import Visibility from '@mui/icons-material/Visibility';
@@ -56,6 +56,11 @@ export const Login: React.FC = () => {
   const [loading, setLoading]         = useState(false);
   const { login }  = useAuth();
   const navigate   = useNavigate();
+  const location   = useLocation();
+  // Where ProtectedRoute sent the user from. Only a path inside this app is accepted, never a full
+  // URL, so a crafted link cannot bounce a fresh sign-in to another site.
+  const from = (location.state as { from?: unknown } | null)?.from;
+  const returnTo = typeof from === 'string' && from.startsWith('/') && !from.startsWith('//') ? from : '/dashboard';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -64,7 +69,7 @@ export const Login: React.FC = () => {
     try {
       const result = await login(username, password);
       if (result.success) {
-        navigate('/dashboard');
+        navigate(returnTo, { replace: true });
       } else {
         setError(result.error || 'Invalid credentials. Please try again.');
       }

@@ -289,7 +289,7 @@ public class FilterService : IFilterService
         return byImpeller.Values.OrderBy(d => d.ImpellerNumber).ToList();
     }
 
-    public async Task<FilteredRequestInfoDto?> GetLatestCompletedAsync()
+    public async Task<FilteredRequestInfoDto?> GetRequestAsync(int requestId)
     {
         try
         {
@@ -299,13 +299,12 @@ public class FilterService : IFilterService
             const string sql = @"
                 SELECT id, filter_by, filter_start, filter_end, period_label,
                        filter_cycle_from, filter_cycle_to, filter_metal_name, processed_at,
-                       selected_parameters
+                       selected_parameters, status
                 FROM calculation_requests
-                WHERE status = 'done'
-                ORDER BY id DESC
-                LIMIT 1;";
+                WHERE id = @id;";
 
             await using var cmd = new NpgsqlCommand(sql, conn);
+            cmd.Parameters.AddWithValue("id", requestId);
             await using var reader = await cmd.ExecuteReaderAsync();
 
             if (!await reader.ReadAsync()) return null;
@@ -320,12 +319,13 @@ public class FilterService : IFilterService
                 FilterCycleTo   = reader.IsDBNull(6) ? null : reader.GetInt32(6),
                 FilterMetalName = reader.IsDBNull(7) ? null : reader.GetString(7),
                 ProcessedAt     = reader.IsDBNull(8) ? null : reader.GetDateTime(8),
-                SelectedParameters = reader.IsDBNull(9) ? null : reader.GetFieldValue<string[]>(9)
+                SelectedParameters = reader.IsDBNull(9) ? null : reader.GetFieldValue<string[]>(9),
+                Status          = reader.GetString(10)
             };
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to read latest completed calculation_request");
+            _logger.LogError(ex, "Failed to read calculation_request {Id}", requestId);
             throw;
         }
     }

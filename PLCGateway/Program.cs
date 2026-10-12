@@ -1,19 +1,42 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting.WindowsServices;
 using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
+using System.Threading.RateLimiting;
+using PlcApi.Hosting;
 using PlcApi.Middleware;
 using PlcApi.Services;
 
-var builder = WebApplication.CreateBuilder(args);
+// Installed, the gateway runs as a Windows service (ShotSenseGateway). Windows starts services in
+// C:\Windows\System32, so the content root is pinned to the exe's own folder — otherwise neither
+// wwwroot (the dashboard) nor appsettings.json would be found. From a terminal or `dotnet run`
+// nothing changes.
+bool runningAsService = WindowsServiceHelpers.IsWindowsService();
+var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+    Args            = args,
+    ContentRootPath = runningAsService ? AppContext.BaseDirectory : null,
+});
+builder.Host.UseWindowsService(o => o.ServiceName = GatewayPaths.ServiceName);
+
+// An installed gateway's own settings and secrets live in C:\ProgramData\ShotSense (GatewayPaths),
+// where an upgrade cannot overwrite them. Absent on a dev PC, so nothing changes there.
+GatewayPaths.AddInstallSettings(builder.Configuration);
 var config = builder.Configuration;
+
+// One-shot commands (--init-database, --migrate-only, --create-admin, --set-password) run and exit
+// here, before any PLC scanning or web serving is set up. See GatewayCli.
+if (await GatewayCli.TryRunAsync(args, config) is int exitCode)
+    return exitCode;
 
 var plcIp   = config.GetValue<string>("PLC:IpAddress");
 var plcRack = config.GetValue<short>("PLC:Rack");
 var plcSlot = config.GetValue<short>("PLC:Slot");
-var pgConn  = config.GetValue<string>("PostgreSQL:ConnectionString");
+var pgConn  = DatabaseSetup.ConnectionString(config);
 
 // ── Core PLC pipeline (unchanged services) ───────────────────────────────────
 builder.Services.AddSingleton(new PlcService(plcIp!, plcRack, plcSlot));
@@ -52,6 +75,26 @@ builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddControllers();
 builder.Services.AddMemoryCache();
 
+// Sign-in brute-force defence, in two halves (see AuthController.Login):
+//   per visitor IP — 5 attempts a minute. ClientAddress reads Cloudflare's CF-Connecting-IP behind
+//                    the tunnel, where every request otherwise arrives from 127.0.0.1;
+//   per account    — LoginThrottle: 10 failures lock that login name for 15 minutes.
+builder.Services.AddSingleton<LoginThrottle>();
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = async (context, ct) =>
+    {
+        if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
+            context.HttpContext.Response.Headers.RetryAfter = ((int)Math.Ceiling(retryAfter.TotalSeconds)).ToString();
+        await context.HttpContext.Response.WriteAsJsonAsync(
+            new { message = "Too many sign-in attempts. Wait a minute and try again." }, ct);
+    };
+    options.AddPolicy("login", http => RateLimitPartition.GetFixedWindowLimiter(
+        ClientAddress.Of(http),
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 5, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+});
+
 // Jwt:Key signs every dashboard login. The placeholder in appsettings.json is public (it is in the
 // repo), so it is never used: without a real key a random one is made for this run. Logins still
 // work, but everyone must sign in again after each restart (a warning says so at startup).
@@ -81,8 +124,41 @@ builder.Services.AddAuthorization();
 
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
+// A service has no console, so an installed gateway also writes C:\ProgramData\ShotSense\logs\.
+// Logging:File:Enabled=true turns the same files on for a terminal run.
+if (runningAsService || config.GetValue("Logging:File:Enabled", false))
+    builder.Logging.AddProvider(new FileLoggerProvider(GatewayPaths.LogsDir));
 
 var app = builder.Build();
+
+// ── Schema ───────────────────────────────────────────────────────────────────
+// The gateway brings its own database up to date on every start (Database:AutoMigrate, default
+// on), so an upgrade needs no separate migration step and no psql. migration.sql is idempotent, so
+// on a current database this changes nothing. If the database stays unreachable the gateway exits
+// with an error instead of half-running; as a service, Windows then restarts it.
+var startupLog = app.Services.GetRequiredService<ILogger<Program>>();
+
+// Name the database out loud (never the password). Settings are layered — appsettings.json, then the
+// install's ProgramData file — so a malformed entry in the later file silently falls back to the
+// earlier one; this line is how anyone reading the log can tell which database the gateway is on.
+{
+    var target = new Npgsql.NpgsqlConnectionStringBuilder(pgConn);
+    startupLog.LogInformation("Database: {db} on {host}:{port} as {user}.", target.Database, target.Host, target.Port, target.Username);
+}
+
+if (config.GetValue("Database:AutoMigrate", true))
+{
+    try
+    {
+        await DatabaseSetup.MigrateWithRetryAsync(pgConn, startupLog);
+        startupLog.LogInformation("Database schema is up to date.");
+    }
+    catch (Exception ex)
+    {
+        startupLog.LogCritical(ex, "Could not bring the database schema up to date. The gateway is stopping.");
+        return 1;
+    }
+}
 
 // ── One-time startup DB work ─────────────────────────────────────────────────
 using (var scope = app.Services.CreateScope())
@@ -99,22 +175,16 @@ using (var scope = app.Services.CreateScope())
     if (SecretConfig.Get(config, "Admin:ApiKey", SecretConfig.MinLength) is null)
         logger.LogWarning("Admin:ApiKey is not set (or is the placeholder, or under {n} characters): every /api/admin/* request will be refused.", SecretConfig.MinLength);
 
-    // Seed default dashboard users on first run (credentials from config; rotate at deployment).
+    // There is no default login any more. The installer creates the first one with the username
+    // and password typed into it (PLCGateway.exe --create-admin); a known default password on a
+    // gateway reachable from the internet is the first thing anyone tries.
     try
     {
         if (!await users.AnyUsersAsync())
-        {
-            // Fallbacks only matter if the Seed block is missing entirely. They match
-            // appsettings.json so a config-less run cannot quietly create a different account
-            // from the documented one. (The "admin" below is the ROLE, not a username.)
-            var adminUser = config["Seed:AdminUsername"] ?? "sreesakthi";
-            var adminPass = config["Seed:AdminPassword"] ?? "sreesakthi";
-            await users.InsertUserAsync(adminUser, $"{adminUser}@plc.local", "System Admin",
-                PasswordHasher.Hash(adminPass), "admin", null);
-            logger.LogWarning("Seeded default admin user '{u}'. CHANGE THIS PASSWORD before production.", adminUser);
-        }
+            logger.LogWarning("No dashboard login exists yet. Create one with: PLCGateway.exe --create-admin " +
+                              "(from the source: dotnet run --project PLCGateway -- --create-admin).");
     }
-    catch (Exception ex) { logger.LogError(ex, "User seeding failed."); }
+    catch (Exception ex) { logger.LogError(ex, "Checking for dashboard logins failed."); }
 
     // Impeller selection (gateway_settings). Loaded before any hosted service starts, so the first
     // cycle closed and the first spare poll already honour it. With no row — or on a database the
@@ -193,6 +263,8 @@ app.UseStaticFiles(spaStaticFiles);
 // /api/admin/* is gated by the X-Api-Key check (before auth; not JWT-protected)
 app.UseMiddleware<AdminGuardMiddleware>();
 
+app.UseRateLimiter();
+
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -216,3 +288,4 @@ app.MapGet("/api/license", (LicenseState license) =>
 app.MapFallbackToFile("index.html", spaStaticFiles);
 
 app.Run();
+return 0;

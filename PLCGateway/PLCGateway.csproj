@@ -4,6 +4,10 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- Shown in the installer and in Windows' "Installed apps" list. Bump for every release. -->
+    <Version>1.0.0</Version>
+    <Product>ShotSense Gateway</Product>
+    <Company>Shot Sense Technologies</Company>
   </PropertyGroup>
 
   <ItemGroup>
@@ -11,12 +15,18 @@
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.15.0" />
     <PackageReference Include="Npgsql" Version="10.0.0" />
     <PackageReference Include="S7netplus" Version="0.20.0" />
+    <!-- Lets the same exe run as a Windows service (start on boot, restart on failure). A no-op
+         when started from a terminal or by `dotnet run`. -->
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.0" />
   </ItemGroup>
 
   <ItemGroup>
     <None Update="appsettings.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <!-- The schema. Compiled in so the app migrates its own database (MigrationRunner): an installed
+         gateway has no psql. The file stays in the repo for running by hand. -->
+    <EmbeddedResource Include="migration.sql" LogicalName="migration.sql" />
     <None Update="web.config">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
