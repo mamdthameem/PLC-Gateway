@@ -7,7 +7,6 @@ import { fetchSpareStatus } from '../services/spareStatusService';
 import type { SpareStatus } from '../types';
 import { formatRunHours } from '../utils/unitConverters';
 import { usePlcConnection } from '../utils/usePlcConnection';
-import { IMPELLER_SELECTION_CHANGED } from '../services/settingsService';
 
 const POLL_MS          = 10_000;
 const POPUP_COOLDOWN   = 30 * 60 * 1000; // 30 minutes
@@ -94,12 +93,9 @@ export default function SpareHealthTable() {
 
     load();
     const id = setInterval(load, POLL_MS);
-    // A saved impeller selection adds or removes columns; reload now rather than in up to 10 s.
-    window.addEventListener(IMPELLER_SELECTION_CHANGED, load);
     return () => {
       active = false;
       clearInterval(id);
-      window.removeEventListener(IMPELLER_SELECTION_CHANGED, load);
     };
   }, []);
 

@@ -514,4 +514,38 @@ public class AdminController : ControllerBase
             return StatusCode(500, new { error = "history query failed" });
         }
     }
+
+    // PUT /api/admin/settings/impellers — the ONLY way to change which impellers the site includes
+    // (decided 2026-10-13: it is chosen from the cloud, never on the gateway dashboard). Same save
+    // as before: gateway_settings, every cycle's energy re-read from Tier 2, the daily rollup and the
+    // lifetime totals, in one transaction, finished BEFORE the 200 — so the response means the new
+    // figures are already in place. Body: { "selected": [1, 2, 3] }.
+    [HttpPut("settings/impellers")]
+    public async Task<IActionResult> SaveImpellers([FromBody] ImpellerSelectionDto request)
+    {
+        int[] selected;
+        try
+        {
+            selected = ImpellerSelection.Normalize(request.Selected ?? []);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+
+        try
+        {
+            await _calculation.ApplyImpellerSelectionAsync(selected, "cloud");
+            return Ok(new ImpellerSelectionDto
+            {
+                Selected     = _impellers.Snapshot(),
+                MaxImpellers = ImpellerSelection.MaxImpellers
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "admin/settings/impellers failed");
+            return StatusCode(500, new { error = "Failed to save the impeller selection" });
+        }
+    }
 }

@@ -21,6 +21,15 @@ Any change to that controller must update this file and `sample-response.json` i
 | `GET` | `/api/admin/filter/{id}` | One saved Section 2 result by its `requestId` — to show it again (e.g. after a page refresh) without recomputing |
 | `GET` | `/api/admin/filter/{id}/amps` | One filtered calculation's impeller current — tile averages plus the per-cycle chart points |
 | `GET` | `/api/admin/history` | Raw recorded readings of one tag, oldest first, in pages |
+| `PUT` | `/api/admin/settings/impellers` | Choose which impellers the site includes — **the only place this can be changed** |
+
+## Changes on 2026-10-13 — impeller selection moves to the cloud
+
+Which impellers a site includes is now decided **only from the cloud**. The gateway dashboard's
+impeller buttons and its `PUT /api/settings/impellers` are gone; the new
+[`PUT /api/admin/settings/impellers`](#put-apiadminsettingsimpellers) does the same save. Reading
+the selection is unchanged: `impellers.selected` in `/live`. Additive for the cloud — nothing it
+already calls changed.
 
 ## Changes on 2026-10-12 — BREAKING: `section2` removed from `/live`
 
@@ -553,6 +562,43 @@ Response: JSON array, one entry per impeller, ordered by `impellerNumber`.
 | `impellerNumber` | number (integer) | 1–10 |
 | `overallAvgAmps` | number, nullable | Same value as `section2.amps[].overallAvgAmps` |
 | `cycles[]` | array | One point per in-scope cycle, ordered by `cycleNumber`: `{ cycleNumber, blastEnd, avgAmps }`, `avgAmps` 2 dp and nullable. Plot **all** of them — the tile averages every one |
+
+---
+
+# `PUT /api/admin/settings/impellers`
+
+Sets which impellers the site includes. Machine-wide on this gateway: it decides which impellers
+`/live` reports (`amps`, `ampsLastCycle`, `spareGrid`, `spareAlerts`) **and** which ones every
+calculation counts — per-cycle energy, `energy_kwh_total`, `energy_per_casting_kwh_kg`, the energy
+graphs, the Section 2 current split and spare monitoring. Raw `Current_imp_1…10` readings are
+recorded for every impeller regardless.
+
+**Request body**
+
+```json
+{ "selected": [1, 2, 3, 5] }
+```
+
+Impeller numbers 1 to 10, at least one. Order does not matter and duplicates are merged.
+
+**Response `200`** — the selection now in force:
+
+```json
+{ "selected": [1, 2, 3, 5], "maxImpellers": 10 }
+```
+
+The gateway recalculates the energy of **every recorded cycle** (re-read from the stored current
+readings), the daily rollup and the lifetime totals **before** answering, in one transaction — so a
+`200` means the new figures are already in place, and a following `/live` shows them. On a large
+history this takes seconds; allow up to 60 s. Nothing is deleted: selecting an impeller again
+brings its figures straight back. Section 2 results computed earlier are snapshots and keep the old
+selection until the filter is applied again.
+
+| Status | Meaning |
+| --- | --- |
+| `200` | Saved and recalculated |
+| `400` | `{"error": "..."}` — an empty list, or a number outside 1–10 |
+| `500` | `{"error": "Failed to save the impeller selection"}` — nothing changed; the old selection stays |
 
 ---
 

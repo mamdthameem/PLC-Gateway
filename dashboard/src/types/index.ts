@@ -61,13 +61,6 @@ export interface SpareStatus {
   lastUpdatedAt: string;
 }
 
-// gateway_settings — which impellers the site includes. Machine-wide: it decides which impellers
-// every panel shows AND which ones energy, the Section 2 current split and spare monitoring count.
-export interface ImpellerSelection {
-  selected: number[];
-  maxImpellers: number;
-}
-
 // GET /api/license — what the dashboard lock screen shows. See LicenseCheckService for the rules.
 export interface LicenseStatus {
   locked: boolean;

@@ -381,7 +381,7 @@ Thresholds (spare_index 0–13, hours): 100, 300, 300, 600, 2000, 2000, 300, 200
 | `PLCGateway/PlcService.cs`                 | S7.NetPlus wrapper — `ReadRegion`, reserved `Write`                       |
 | `PLCGateway/CovDetectionService.cs`        | COV logic (relative/absolute deadband, state-change)                     |
 | `PLCGateway/Models/*.cs`                   | `PlcCycle`, `CalculationRequest`, `AggregationState`, `ScanWrites`, …     |
-| `PLCGateway/Api/Controllers/*.cs`          | Dashboard API + `AuthController` (JWT) + `AdminController` (cloud pulls: `live`, `trends`, `filter`, `filter/{id}`, `filter/{id}/amps`, `amps/by-cycle`, `history`) + `FilterController` (`GET /api/filter/{id}` reopens a saved request) + `TrendsController` (local dashboard's graph series, JWT-protected) + `SettingsController` (`GET/PUT /api/settings/impellers`) |
+| `PLCGateway/Api/Controllers/*.cs`          | Dashboard API + `AuthController` (JWT) + `AdminController` (cloud pulls: `live`, `trends`, `filter`, `filter/{id}`, `filter/{id}/amps`, `amps/by-cycle`, `history`; the one cloud write `PUT settings/impellers`) + `FilterController` (`GET /api/filter/{id}` reopens a saved request) + `TrendsController` (local dashboard's graph series, JWT-protected) + `SettingsController` (`GET /api/settings/impellers`, read-only) |
 | `PLCGateway/Api/Services/*.cs`             | API data services (typed reads), `TrendsService` (all graph math, `bucket=auto`, gap-fill), `UserService`, `LicenseState` |
 | `dashboard/src/utils/trendBuckets.ts`      | Axis + tooltip label formatting per bucket (selection moved server-side)  |
 | `dashboard/src/utils/chartAxis.ts`         | Shared axis construction — strided ticks, rounded y-domains, axis titles  |
@@ -393,7 +393,6 @@ Thresholds (spare_index 0–13, hours): 100, 300, 300, 600, 2000, 2000, 300, 200
 | `dashboard/src/components/FilterBar.tsx`    | Filter mode tabs + per-parameter toggles (Select All / Clear All); stays usable while a filter is applied |
 | `dashboard/src/utils/usePlcConnection.ts`  | Shared PLC-link poll behind the amps + spares staleness banners            |
 | `dashboard/src/components/LicenseGate.tsx` | Swaps the dashboard for a lock screen while `GET /api/license` says locked; warns during the grace period |
-| `dashboard/src/components/ImpellerSelector.tsx` | Impeller number buttons + confirm dialog in the Live Impeller Current header. `services/settingsService.ts` fires `IMPELLER_SELECTION_CHANGED` after a save so the slow-polling panels reload at once |
 | `PLCGateway/Api/Middleware/*.cs`           | `AdminGuardMiddleware` (IP+key), `LicenseLockMiddleware` (402 when locked) |
 | `dashboard/`                               | **Dashboard source** (Vite + React + TS), vendored in-repo. `npm run build` emits into `PLCGateway/wwwroot` (same-origin). |
 | `PLCGateway/wwwroot/`                       | Built React dashboard (served same-origin) — generated from `dashboard/`   |
@@ -528,11 +527,16 @@ LIMIT 1`.**
 
 ## Impeller selection (`gateway_settings.selected_impellers`)
 
-Which impellers the site includes, picked with the number buttons in the **Live Impeller Current**
-header (`ImpellerSelector`). It replaced the expo-era `Impellers:Count` config key. The choice is
-**machine-wide** — saved on the gateway for every viewer and the cloud — and it is **not only a
-display filter: hidden impellers are left out of the calculations too.** Any signed-in user may
-change it (site decision, 2026-09-15).
+Which impellers the site includes. It replaced the expo-era `Impellers:Count` config key. The choice
+is **machine-wide** — saved on the gateway for every viewer and the cloud — and it is **not only a
+display filter: hidden impellers are left out of the calculations too.**
+
+**Chosen from the cloud only (decided 2026-10-13)**, by any cloud admin, with the number buttons in
+the cloud client page's Impeller Current header → `gatewayProxy` view `set-impellers` →
+`PUT /api/admin/settings/impellers`. The gateway dashboard has **no** buttons and no write endpoint
+(`GET /api/settings/impellers` is read-only); its panels pick a change up on their next poll. This
+reverses the 2026-09-15 "any signed-in user may change it" decision — a change from one phone was
+showing on every screen, which is what the site took for a shared filter.
 
 | Reader | Effect |
 | ------ | ------ |
@@ -545,7 +549,7 @@ change it (site decision, 2026-09-15).
 | Dashboard | derives everything from what the API returns; `SpareHealthTable` builds its columns from the rows themselves |
 | `GatewayWorker` | **unaffected** — raw `Current_imp_1…10` are recorded for every impeller, always |
 
-**Saving recalculates all recorded energy.** `PUT /api/settings/impellers` →
+**Saving recalculates all recorded energy.** `PUT /api/admin/settings/impellers` →
 `CalculationService.ApplyImpellerSelectionAsync` → `DatabaseService.SaveImpellerSelectionAsync`,
 one transaction: `gateway_settings`, `plc_cycles.energy_kwh` for every cycle (re-read from Tier 2),
 `plc_daily_trends.energy_kwh` per day, and `plc_aggregation_state.energy_total`. The lifetime
@@ -560,7 +564,7 @@ the original stored figures exactly (verified cycle by cycle on a copy of the re
 - **Not routed through `RetryAsync`,** which logs and swallows a final failure — the dashboard must
   be told when a save did not happen. The in-memory selection is put back if the save fails.
 - **Section 2 results are snapshots.** A filter computed before a change keeps the old impeller set
-  until it is applied again; the confirm dialog says so.
+  until it is applied again; the cloud's confirm dialog says so.
 
 Both amps panels and the spare table are **width-capped and CENTRED**. The cap is what makes
 centring work at all: `1fr` tracks always fill their container, so two impellers would stretch to
@@ -680,7 +684,8 @@ Two people filtering at once must never change each other's dashboard. Rules:
   (internal paths only).
 - **Times from `GET /api/filter/{id}` carry the gateway's offset** (`+05:30`): they are stored as plant
   wall-clock time, and a browser in another zone would otherwise misread them.
-- Impeller selection is **not** a filter: it stays machine-wide by design (see "Impeller selection").
+- Impeller selection is **not** a filter: it stays machine-wide by design, and is set only from the
+  cloud (see "Impeller selection").
 - **Open question — no cleanup.** Nothing ever deletes old `calculation_requests` rows or their
   `plc_filtered_*` results; they grow with every Apply (one row per cycle in scope, plus cycles ×
   impellers amps rows). Deliberately not addressed yet (2026-10-12): decide a retention rule first.
