@@ -216,10 +216,13 @@ public class DatabaseService
         if (string.IsNullOrEmpty(parameterName)) return null;
 
         PlcCurrentValue? result = null;
+        // Newest first: after a PLC's data block moves (DB60 → DB600) the old address's row stays in
+        // Tier 1 under the same name, frozen; the live one is the one still being updated.
         string sql = $@"
             SELECT address, parameter_name, {ValueExpr}, data_type, last_updated, last_stored_historical, last_heartbeat, is_stale
             FROM plc_current_values
             WHERE parameter_name = @name
+            ORDER BY last_updated DESC NULLS LAST
             LIMIT 1";
 
         await RetryAsync(async conn =>

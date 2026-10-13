@@ -37,7 +37,7 @@ public class AggregationService : BackgroundService
             try
             {
                 // Detect shift boundaries for logging
-                var machineStatusRecord = await _dbService.GetCurrentValueAsync("DB60.DBB0");
+                var machineStatusRecord = await _dbService.GetCurrentValueByNameAsync(GatewayWorker.MACHINE_STATUS_TAG_NAME);
                 bool machineIsOn = machineStatusRecord?.Value != null && machineStatusRecord.Value != "0";
 
                 if (!_machineWasOn && machineIsOn)

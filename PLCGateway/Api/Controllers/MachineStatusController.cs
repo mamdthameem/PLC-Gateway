@@ -19,7 +19,7 @@ public class MachineStatusController : ControllerBase
     }
 
     /// <summary>
-    /// Live machine status from plc_current_values (address = DB60.DBB0). Poll every 5 s.
+    /// Live machine status from plc_current_values (tag "Machine status"). Poll every 5 s.
     /// value='0' â†’ Stopped; any other value â†’ Running.
     /// </summary>
     [HttpGet]

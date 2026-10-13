@@ -22,7 +22,6 @@ public class CalculationService
     private const string TAG_MACHINE_ST  = "Machine status";
     private const string TAG_SHOT_REFILL = "Refil shots weight";
     private const string TAG_TONNAGE     = "Tonnage";
-    private const string ADDR_MACHINE_ST = "DB60.DBB0";
 
     private const int AggBatchSize = 10000;
     private static readonly string[] AggTags = { TAG_BLAST, TAG_MACHINE_ST, TAG_SHOT_REFILL };
@@ -117,7 +116,7 @@ public class CalculationService
             // 3. Emit parameters from the accumulators + live Tier 1 values.
             var now = DateTime.Now;
 
-            var machineStatusRec = await _db.GetCurrentValueAsync(ADDR_MACHINE_ST);
+            var machineStatusRec = await _db.GetCurrentValueByNameAsync(TAG_MACHINE_ST);
             decimal machineStatusVal = machineStatusRec?.Value != null && machineStatusRec.Value != "0" ? 1m : 0m;
             await _db.UpsertLifetimeParameterAsync("machine_status", machineStatusVal);
 
