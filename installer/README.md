@@ -31,8 +31,8 @@ keeps the data folder, and a different major version can't open it.
 
 ## What the setup does
 
-Pages: **installation code** (a large box with a **Paste** button; copy it in the cloud with Clients →
-Edit → Copy installation code, see `INSTALLATION-CODE.md`) → **PLC** IP, rack and slot → **dashboard
+Pages: **installation code** (a large box: click in it and press Ctrl+V; copy it in the cloud with
+Clients → Edit → Copy installation code, see `INSTALLATION-CODE.md`) → **PLC** IP, rack and slot → **dashboard
 login** (username, and a password of at least 12 characters, typed twice) → **plant network** checkbox →
 install folder.
 

@@ -2,8 +2,8 @@
 
 When a client is registered in the cloud, the cloud shows one **installation code** (Clients → Edit →
 **Copy installation code**, available once the client is saved). It's pasted into
-`ShotSense-Gateway-Setup.exe` on the client's PC — the wizard has a large box and a **Paste** button
-for it — and it is the only way the cloud's keys reach that PC: nobody copies keys into settings files
+`ShotSense-Gateway-Setup.exe` on the client's PC — the wizard has a large box for it; click in it and
+press Ctrl+V — and it is the only way the cloud's keys reach that PC: nobody copies keys into settings files
 by hand.
 
 The installer reads it in `installer/scripts/Common.ps1` (`ConvertFrom-InstallCode`). Keep that

@@ -124,24 +124,18 @@ end;
 
 { ---- Pages --------------------------------------------------------------------------------- }
 
-{ The installation code is about 900 characters, so it gets a large box that wraps, plus a Paste
-  button: a one-line field hid almost all of it and made a bad paste impossible to spot. Line breaks
-  and spaces in it are ignored when it is read. }
+{ The installation code is about 900 characters, so it gets a large box that wraps: a one-line field
+  hid almost all of it and made a bad paste impossible to spot. Ctrl+V and right-click → Paste both
+  work in it (Inno's script cannot read the clipboard, so there is no Paste button). Line breaks and
+  spaces in it are ignored when it is read. }
 function InstallCodeText: String;
 begin
   Result := Trim(CodeMemo.Text);
 end;
 
-procedure PasteCodeClick(Sender: TObject);
-begin
-  CodeMemo.Text := '';
-  CodeMemo.PasteFromClipboard;
-end;
-
 procedure InitializeWizard;
 var
   CodeHelp: TNewStaticText;
-  PasteButton: TNewButton;
 begin
   CodePage := CreateCustomPage(wpWelcome,
     'Installation code',
@@ -153,20 +147,12 @@ begin
   CodeHelp.Width := CodePage.SurfaceWidth;
   CodeHelp.Caption :=
     'In the cloud: Clients, then Edit on this client, then "Copy installation code". ' +
-    'Then click Paste below. The code starts with SSG1. and carries this client''s licence, ' +
-    'keys, tag file address and internet address. Treat it like a password.';
-
-  PasteButton := TNewButton.Create(CodePage);
-  PasteButton.Parent := CodePage.Surface;
-  PasteButton.Caption := '&Paste';
-  PasteButton.Top := CodeHelp.Top + CodeHelp.Height + ScaleY(10);
-  PasteButton.Width := ScaleX(90);
-  PasteButton.Height := ScaleY(25);
-  PasteButton.OnClick := @PasteCodeClick;
+    'Then click in the box below and press Ctrl+V (or right-click, Paste). The code starts with SSG1. ' +
+    'and carries this client''s licence, keys, tag file address and internet address. Treat it like a password.';
 
   CodeMemo := TNewMemo.Create(CodePage);
   CodeMemo.Parent := CodePage.Surface;
-  CodeMemo.Top := PasteButton.Top + PasteButton.Height + ScaleY(8);
+  CodeMemo.Top := CodeHelp.Top + CodeHelp.Height + ScaleY(10);
   CodeMemo.Width := CodePage.SurfaceWidth;
   CodeMemo.Height := CodePage.SurfaceHeight - CodeMemo.Top;
   CodeMemo.ScrollBars := ssVertical;

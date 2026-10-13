@@ -689,8 +689,9 @@ Tags differ per client and must stay private to the office, so **the installer s
 
 Clients → Edit → **Copy installation code** (`web/src/utils/installCode.ts` in the cloud repo), offered only
 while the dialog matches what is saved. It carries `siteProfileUrl` now, and the client's Cloudflare tunnel
-token, which the cloud stores with the client's keys (admins only). The wizard's code page is a large box
-with a **Paste** button; whitespace is ignored. Format: `INSTALLATION-CODE.md`.
+token, which the cloud stores with the client's keys (admins only). The wizard's code page is a large wrapping box
+(Ctrl+V or right-click → Paste; Inno's script cannot read the clipboard, so no Paste button); whitespace
+is ignored. Format: `INSTALLATION-CODE.md`.
 
 ## Installed gateway (installer, 2026-10-04)
 
