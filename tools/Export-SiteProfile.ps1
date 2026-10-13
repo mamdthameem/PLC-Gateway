@@ -16,11 +16,14 @@
     .\tools\Export-SiteProfile.ps1 -OutFile "$env:USERPROFILE\Documents\sreesakthi.siteprofile.json"
 #>
 param(
-    [string]$Source = (Join-Path $PSScriptRoot '..\PLCGateway\appsettings.json'),
+    # Default: the gateway's own appsettings.json. Worked out below, not here: Windows PowerShell 5.1
+    # leaves $PSScriptRoot empty in parameter defaults when started with -File.
+    [string]$Source = '',
     [Parameter(Mandatory)][string]$OutFile
 )
 
 $ErrorActionPreference = 'Stop'
+if (-not $Source) { $Source = Join-Path $PSScriptRoot '..\PLCGateway\appsettings.json' }
 
 # Must match SiteProfile.Sections in the gateway and SECTIONS in the cloud's siteProfile function.
 $sections = 'Tags', 'ScanIntervalMs', 'CovRules', 'DataCollection', 'MaintenanceThresholds'
