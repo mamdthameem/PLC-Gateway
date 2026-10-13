@@ -6,6 +6,7 @@ namespace PlcApi.Hosting;
 //
 //   C:\ProgramData\ShotSense\appsettings.Production.json   this install's settings and secrets
 //   C:\ProgramData\ShotSense\logs\                          gateway-YYYYMMDD.log, install logs
+//   C:\ProgramData\ShotSense\site\                          the encrypted copy of the client's tag file (SiteProfile)
 //   C:\ProgramData\ShotSense\pgdata\                        the bundled PostgreSQL's data
 //
 // ProgramData, not the install folder, so an upgrade (which replaces program files) and an uninstall
@@ -24,6 +25,7 @@ public static class GatewayPaths
 
     public static string SettingsFile => Path.Combine(DataDir, "appsettings.Production.json");
     public static string LogsDir      => Path.Combine(DataDir, "logs");
+    public static string SiteDir      => Path.Combine(DataDir, "site");
 
     /// <summary>
     /// Layers the install's settings file over appsettings.json / appsettings.{env}.json, and UNDER

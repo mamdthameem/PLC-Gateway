@@ -1,6 +1,10 @@
-// Authenticated dashboard user (from the backend JWT). Single-site only — no tenant,
-// customer, or subscription concept exists in this client app.
-export type UserRole = 'admin' | 'user';
+// The signed-in person, as the gateway sees them (GET /api/auth/me). Single-site only — the gateway
+// accepts only its own client's people. Role "admin" or "viewer"; the old shared login's "user"
+// arrives as "viewer".
+export type UserRole = 'admin' | 'viewer';
+
+/** How they signed in: their own email, the old shared login, or the emergency local admin. */
+export type LoginKind = 'firebase' | 'password' | 'local-admin';
 
 export interface User {
   id: string;
@@ -8,6 +12,7 @@ export interface User {
   email: string;
   name: string;
   role: UserRole;
+  login: LoginKind;
 }
 
 // Live machine status (plc_current_values WHERE address = 'DB60.DBB0') joined with the

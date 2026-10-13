@@ -7,9 +7,11 @@ import {
     Menu,
     MenuItem,
     Badge,
+    Chip,
     ListItemIcon,
     ListItemText,
 } from '@mui/material';
+import LogoutIcon from '@mui/icons-material/Logout';
 import MenuIcon from '@mui/icons-material/Menu';
 import NotificationsNoneIcon from '@mui/icons-material/NotificationsNone';
 import NotificationsIcon from '@mui/icons-material/Notifications';
@@ -20,10 +22,16 @@ import { useLocation } from 'react-router-dom';
 import { useUI } from '../contexts/UIContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { useNotifications } from '../contexts/NotificationContext';
+import { useAuth } from '../contexts/AuthContext';
 import BB8Toggle from './ui/star-wars-toggle-switch';
+
+// What the role chip says. The emergency login is named as such, so nobody mistakes it for an account.
+const roleLabel = (role: 'admin' | 'viewer', login: string) =>
+    login === 'local-admin' ? 'Local admin' : role === 'admin' ? 'Admin' : 'Viewer';
 
 export const TopBar: React.FC = () => {
     const location = useLocation();
+    const { user, logout } = useAuth();
     const { sidebarOpen, toggleSidebar } = useUI();
     const { mode, toggleTheme } = useTheme();
     const { notifications, unreadCount } = useNotifications();
@@ -176,6 +184,41 @@ export const TopBar: React.FC = () => {
                             ))
                         )}
                     </Menu>
+
+                    {/* Who is signed in, and as what */}
+                    {user && (
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, ml: 1 }}>
+                            <Box sx={{ display: { xs: 'none', sm: 'flex' }, flexDirection: 'column', alignItems: 'flex-end', minWidth: 0 }}>
+                                <Typography
+                                    sx={{ fontSize: '0.85rem', fontWeight: 700, lineHeight: 1.2, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                >
+                                    {user.name}
+                                </Typography>
+                                {user.email && user.email !== user.name && (
+                                    <Typography
+                                        sx={{ fontSize: '0.7rem', color: 'text.secondary', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                    >
+                                        {user.email}
+                                    </Typography>
+                                )}
+                            </Box>
+                            <Chip
+                                label={roleLabel(user.role, user.login)}
+                                size="small"
+                                color={user.login === 'local-admin' ? 'warning' : user.role === 'admin' ? 'primary' : 'default'}
+                                sx={{ fontWeight: 700, fontSize: '0.7rem' }}
+                            />
+                            <Tooltip title="Sign out">
+                                <IconButton
+                                    onClick={logout}
+                                    aria-label="Sign out"
+                                    sx={{ color: (theme) => theme.palette.text.secondary, '&:hover': { color: (theme) => theme.palette.text.primary } }}
+                                >
+                                    <LogoutIcon fontSize="small" />
+                                </IconButton>
+                            </Tooltip>
+                        </Box>
+                    )}
             </Box>
         </Box>
     );

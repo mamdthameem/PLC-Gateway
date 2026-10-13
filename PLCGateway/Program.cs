@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using System.Threading.RateLimiting;
+using PlcApi.Auth;
 using PlcApi.Hosting;
 using PlcApi.Middleware;
 using PlcApi.Services;
@@ -32,6 +33,23 @@ var config = builder.Configuration;
 // here, before any PLC scanning or web serving is set up. See GatewayCli.
 if (await GatewayCli.TryRunAsync(args, config) is int exitCode)
     return exitCode;
+
+// The client's tag list and recording rules (SiteProfile): from the cloud on an installed gateway,
+// from appsettings.json on a dev PC. Loaded before anything reads its settings. With no tag file at
+// all there is nothing to read the PLC with, so the gateway stops; as a service it retries in a minute.
+SiteProfileState siteProfile;
+using (var bootLogs = LoggerFactory.Create(logging =>
+{
+    logging.AddConsole();
+    if (runningAsService || config.GetValue("Logging:File:Enabled", false))
+        logging.AddProvider(new FileLoggerProvider(GatewayPaths.LogsDir));
+}))
+{
+    if (await SiteProfile.LoadAsync(builder.Configuration, bootLogs.CreateLogger("SiteProfile")) is not { } loaded)
+        return 1;
+    siteProfile = loaded;
+}
+builder.Services.AddSingleton(siteProfile);
 
 var plcIp   = config.GetValue<string>("PLC:IpAddress");
 var plcRack = config.GetValue<short>("PLC:Rack");
@@ -103,8 +121,15 @@ var jwtSigningKey = new JwtSigningKey(
     configuredJwtKey ?? Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(48)),
     generated: configuredJwtKey is null);
 builder.Services.AddSingleton(jwtSigningKey);
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
+
+// Dashboard sign-in: Firebase email logins (one per person, managed from the cloud), plus the
+// gateway's own tokens for the old shared login and the emergency local admin. See GatewayAuth.
+var firebaseLogin = FirebaseLogin.FromConfig(config);
+builder.Services.AddSingleton(firebaseLogin);
+var authBuilder = builder.Services.AddAuthentication(GatewayAuth.Scheme)
+    .AddPolicyScheme(GatewayAuth.Scheme, "Gateway", options =>
+        options.ForwardDefaultSelector = http => GatewayAuth.SelectScheme(http, firebaseLogin))
+    .AddJwtBearer(GatewayAuth.LocalScheme, options =>
     {
         options.TokenValidationParameters = new TokenValidationParameters
         {
@@ -116,7 +141,36 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidAudience = config["Jwt:Audience"],
             IssuerSigningKey = jwtSigningKey.SecurityKey
         };
+        options.Events = new JwtBearerEvents
+        {
+            OnTokenValidated = ctx => GatewayAuth.ValidateLocalToken(ctx, config),
+            OnChallenge      = GatewayAuth.WriteChallengeAsync,
+        };
     });
+if (firebaseLogin.Enabled)
+{
+    authBuilder.AddJwtBearer(GatewayAuth.FirebaseScheme, options =>
+    {
+        // Google's signing keys are found through the issuer's discovery document and cached, so a
+        // token is checked here without calling the cloud on every request.
+        options.Authority        = firebaseLogin.Issuer;
+        options.MapInboundClaims = false;   // keep Firebase's own claim names: role, clientId, email, name
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidIssuer = firebaseLogin.Issuer,
+            ValidateAudience = true,
+            ValidAudience = firebaseLogin.ProjectId,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+        };
+        options.Events = new JwtBearerEvents
+        {
+            OnTokenValidated = ctx => GatewayAuth.ValidateFirebaseToken(ctx, firebaseLogin),
+            OnChallenge      = GatewayAuth.WriteChallengeAsync,
+        };
+    });
+}
 builder.Services.AddAuthorization();
 
 // No CORS policy is registered: the dashboard is served same-origin by this app, and the
@@ -175,16 +229,32 @@ using (var scope = app.Services.CreateScope())
     if (SecretConfig.Get(config, "Admin:ApiKey", SecretConfig.MinLength) is null)
         logger.LogWarning("Admin:ApiKey is not set (or is the placeholder, or under {n} characters): every /api/admin/* request will be refused.", SecretConfig.MinLength);
 
-    // There is no default login any more. The installer creates the first one with the username
-    // and password typed into it (PLCGateway.exe --create-admin); a known default password on a
-    // gateway reachable from the internet is the first thing anyone tries.
-    try
+    // Which sign-ins this gateway accepts, said out loud (see GatewayAuth).
+    if (firebaseLogin.Enabled && firebaseLogin.ClientId.Length > 0)
+        logger.LogInformation("Email sign-in: on, for client {clientId} (from {source}).", firebaseLogin.ClientId, firebaseLogin.ClientIdSource);
+    else if (firebaseLogin.Enabled)
+        logger.LogWarning("Email sign-in: refused for everyone: this gateway has no client id (set Firebase:ClientId).");
+    else
+        logger.LogWarning("Email sign-in: off (Firebase:ProjectId / Firebase:ApiKey not set).");
+
+    bool legacyLogin = GatewayAuth.LegacyLoginEnabled(config);
+    logger.LogInformation("Shared username/password login: {state}.", legacyLogin ? "on" : "off (Auth:LegacyLoginEnabled=false)");
+    logger.LogInformation("Local admin login: {state}.",
+        GatewayAuth.LocalAdminHash(config) is null ? "not set up (Auth:LocalAdmin:PasswordHash)" : "set up, plant network only");
+
+    // There is no default login. With email sign-in off, the shared login needs at least one account,
+    // made with PLCGateway.exe --create-admin; a known default password on a gateway reachable from the
+    // internet is the first thing anyone tries.
+    if (legacyLogin && !firebaseLogin.Enabled)
     {
-        if (!await users.AnyUsersAsync())
-            logger.LogWarning("No dashboard login exists yet. Create one with: PLCGateway.exe --create-admin " +
-                              "(from the source: dotnet run --project PLCGateway -- --create-admin).");
+        try
+        {
+            if (!await users.AnyUsersAsync())
+                logger.LogWarning("No dashboard login exists yet. Create one with: PLCGateway.exe --create-admin " +
+                                  "(from the source: dotnet run --project PLCGateway -- --create-admin).");
+        }
+        catch (Exception ex) { logger.LogError(ex, "Checking for dashboard logins failed."); }
     }
-    catch (Exception ex) { logger.LogError(ex, "Checking for dashboard logins failed."); }
 
     // Impeller selection (gateway_settings). Loaded before any hosted service starts, so the first
     // cycle closed and the first spare poll already honour it. With no row — or on a database the
@@ -288,4 +358,7 @@ app.MapGet("/api/license", (LicenseState license) =>
 app.MapFallbackToFile("index.html", spaStaticFiles);
 
 app.Run();
-return 0;
+
+// A newer tag file was saved while running (LicenseCheckService): exit 1, so the Windows service's
+// failure action starts the gateway again a minute later, on the new tags.
+return siteProfile.RestartRequested ? 1 : 0;

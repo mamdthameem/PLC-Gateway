@@ -1,23 +1,15 @@
 import type { SpareStatus } from '../types';
 
-import { API_BASE } from './apiBase';
-
-function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem('plc_gateway_token');
-  const isJwt = token && token.includes('.') && !token.startsWith('local-');
-  return {
-    ...(isJwt ? { Authorization: `Bearer ${token}` } : {}),
-  };
-}
+import { apiFetch } from './apiClient';
 
 export async function fetchSpareStatus(): Promise<SpareStatus[]> {
-  const res = await fetch(`${API_BASE}/api/sparestatus`, { headers: authHeaders() });
+  const res = await apiFetch(`/api/sparestatus`);
   if (!res.ok) throw new Error(`Spare status fetch failed: ${res.status} ${res.statusText}`);
   return res.json() as Promise<SpareStatus[]>;
 }
 
 export async function fetchSpareAlerts(): Promise<SpareStatus[]> {
-  const res = await fetch(`${API_BASE}/api/sparestatus/alerts`, { headers: authHeaders() });
+  const res = await apiFetch(`/api/sparestatus/alerts`);
   if (!res.ok) throw new Error(`Spare alerts fetch failed: ${res.status} ${res.statusText}`);
   return res.json() as Promise<SpareStatus[]>;
 }

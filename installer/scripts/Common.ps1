@@ -173,5 +173,18 @@ function ConvertFrom-InstallCode([string]$Code) {
     if ($hasTunnel -and [string]::IsNullOrWhiteSpace([string]$c.publicHostname)) {
         throw 'The code has a tunnel token but no public address (publicHostname).'
     }
+    # Where the gateway fetches this client's tag file. Codes made before 2026-10-13 have none; the
+    # address is then the licence check's, with siteProfile in place of licenseCheck.
+    if ([string]::IsNullOrWhiteSpace([string]$c.siteProfileUrl)) {
+        $c | Add-Member -NotePropertyName siteProfileUrl -NotePropertyValue (Get-SiteProfileUrl ([string]$c.licenseCheckUrl)) -Force
+    } elseif (-not ([string]$c.siteProfileUrl).StartsWith('https://')) {
+        throw 'The tag file address in the code must start with https://.'
+    }
     return $c
+}
+
+# The cloud's tag-file address for a licence check address:
+#   https://…/licenseCheck?clientId=X  ->  https://…/siteProfile?clientId=X
+function Get-SiteProfileUrl([string]$LicenseCheckUrl) {
+    return ($LicenseCheckUrl -replace '/licenseCheck\?', '/siteProfile?')
 }

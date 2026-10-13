@@ -367,8 +367,12 @@ Thresholds (spare_index 0–13, hours): 100, 300, 300, 600, 2000, 2000, 300, 200
 | `tools/Set-DashboardPassword.ps1`          | Dev PC only (uses psql): changes a dashboard password, writes the PBKDF2 format. An installed gateway uses `PLCGateway.exe --set-password` |
 | `PLCGateway/Hosting/*.cs`                  | Installed-gateway plumbing: `GatewayPaths` (ProgramData settings/logs), `GatewayCli` (`--init-database`, `--migrate-only`, `--create-admin`, `--set-password`), `DatabaseSetup` (create role+DB, run the embedded `migration.sql`), `FileLoggerProvider` |
 | `PLCGateway/Api/Services/LoginThrottle.cs` | Per-account sign-in lockout + `ClientAddress` (real visitor IP behind the tunnel) |
+| `PLCGateway/Api/Auth/GatewayAuth.cs`       | Sign-in: scheme selection, Firebase token rules (`FirebaseLogin`, clientId match), gateway-token rules, `NetworkOrigin` (plant network vs tunnel), JSON 401 reasons |
+| `dashboard/src/services/apiClient.ts`      | `apiFetch` — every signed-in API call: fresh token each time, 401/403 ends the session with the gateway's reason |
 | `installer/`                               | Inno Setup installer: `build.ps1` → `output/ShotSense-Gateway-Setup-<ver>.exe`; `ShotSenseGateway.iss` (wizard); `scripts/*.ps1` (install/upgrade/uninstall work). See `installer/README.md` |
 | `INSTALLATION-CODE.md`                     | The `SSG1.` code the cloud shows at client registration and the installer consumes |
+| `PLCGateway/Hosting/SiteProfile.cs`        | The client's tag file from the cloud: fetch at start, encrypted saved copy, applied as a settings layer |
+| `tools/Export-SiteProfile.ps1`             | Writes a client's tag file (the five tag sections only) from an appsettings.json, for uploading in the cloud |
 | `tools/New-InstallCode.ps1`                | Builds an installation code by hand (testing, or until the cloud generates them) |
 | `PLCGateway/TagParser.cs`                  | Parses tags from raw DB byte regions (S7 big-endian)                      |
 | `PLCGateway/AggregationService.cs`         | Section 1 incremental computation trigger (1 min)                         |
@@ -615,6 +619,8 @@ Cloudflare quick tunnel — `DEPLOYMENT-NOTES.md` section 11).
     15 minutes (`LoginThrottle`, in memory). Behind the tunnel every request comes from 127.0.0.1, so
     the IP is Cloudflare's `CF-Connecting-IP` — **trusted only on a loopback connection**, because
     port 5200 can be open to the plant LAN, where anyone could send a made-up header.
+  - These rules are for the **old shared login**, now being replaced by per-person email accounts —
+    see "Dashboard sign-in" below.
   - **No default login.** The `Seed` block and the hard-coded `sreesakthi`/`sreesakthi` fallback are
     gone. The first login is made with `PLCGateway.exe --create-admin` (the installer does this with
     the username and password typed into it); passwords are set with `--set-password`. Minimum
@@ -633,6 +639,58 @@ Cloudflare quick tunnel — `DEPLOYMENT-NOTES.md` section 11).
   contract's UTC rule. Documented rather than changed, so existing callers keep working.
 
 ---
+
+## Dashboard sign-in: email accounts, shared login, local admin (2026-10-13)
+
+Three ways in, one `[Authorize]`. The default scheme `Gateway` (`Api/Auth/GatewayAuth.cs`) reads each
+bearer token's issuer to pick the check; controllers need nothing else. `/api/admin/*` is untouched —
+the cloud keeps its `X-Api-Key`.
+
+| Login | Who | Token | Rules |
+| --- | --- | --- | --- |
+| **Email** (normal) | One Firebase account per person, created and managed by any cloud admin on the cloud's Users page | Firebase ID token, checked here against `https://securetoken.google.com/<Firebase:ProjectId>`, audience = project id (Google's keys, cached — no cloud call per request) | `clientId` claim must equal this gateway's `Firebase:ClientId` (empty ⇒ the `clientId` in `License:CheckUrl`); `role` claim `admin`/`viewer`. The dashboard calls `getIdToken()` before **every** API call (`services/apiClient.ts`). A disabled account stops within an hour (ID-token lifetime; the cloud also revokes refresh tokens) |
+| **Shared** (old) | The `users` table username/password | Gateway-signed (`Jwt:Key`), claim `login=password` | `Auth:LegacyLoginEnabled` (default true). Set false once email sign-in is tested: `/api/auth/login` then refuses **and every token it already issued is refused** — read per request, no restart needed |
+| **Local admin** (emergency) | One account: `Auth:LocalAdmin:Username` (default `localadmin`) + `Auth:LocalAdmin:PasswordHash`, made with `PLCGateway.exe --hash-password`, kept in `appsettings.Production.json` | Gateway-signed, claim `login=local-admin`, role admin | **Plant network only.** `NetworkOrigin`: any Cloudflare header (`CF-Connecting-IP`, `CF-Ray`, `CDN-Loop`, `CF-Visitor`) ⇒ came through the tunnel ⇒ refused; otherwise the connection must be loopback or a private address. From the tunnel `/api/auth/local-admin` answers 404 and `/api/auth/config` says `localAdmin: false`; a token obtained on the LAN is refused through the tunnel too |
+
+- `GET /api/auth/config` (anonymous): the public Firebase web identifiers (`Firebase:ProjectId/ApiKey/AuthDomain/AppId`
+  — public by design, same for every gateway, in `appsettings.json`), and which logins to offer.
+- `GET /api/auth/me`: name, email, role, login kind. The dashboard asks right after every sign-in, so a person
+  from another client is refused at once with the gateway's own sentence (`GatewayAuth.WriteChallengeAsync`
+  answers 401 `{message}`; the login page shows it). Any 401/403 on any call ends the session the same way.
+- Roles: the old `users` role `user` reads as `viewer`. **Nothing on the gateway is admin-only today** — impeller
+  selection, the only setting, moved to the cloud. The role is shown in the top bar.
+- The startup log says which of the three logins are on, and the email client id with where it came from.
+
+## The client's tag file comes from the cloud (2026-10-13)
+
+Tags differ per client and must stay private to the office, so **the installer ships no tags**
+(`installer/build.ps1` strips `Tags`, `ScanIntervalMs`, `CovRules`, `DataCollection`,
+`MaintenanceThresholds` from the shipped `appsettings.json` and refuses to build if any remain).
+`PLCGateway/Hosting/SiteProfile.cs`:
+
+| When | What happens |
+| --- | --- |
+| Office | Make the file with `tools/Export-SiteProfile.ps1` (exactly those five sections) and upload it in the cloud: Clients → Edit → **Tag Settings File**. The cloud keeps only those sections, in `siteProfiles/{clientId}`, which **no browser can read**; the dialog shows only file name, tag count and date |
+| Every gateway start, before any service reads settings | `GET SiteProfile:Url` (the cloud's `siteProfile` function) with `X-License-Key`. Downloaded ⇒ used, and saved **AES-256-GCM encrypted** (key derived from `License:Key`) in `C:\ProgramData\ShotSense\site\site-profile.bin`. Cloud unreachable ⇒ the saved copy. Neither ⇒ log and exit 1; the service retries every minute |
+| While running | The hourly licence check returns `siteProfileVersion`. A different one ⇒ download, save, stop with exit code 1 ⇒ the service restarts on it (needs `sc failureflag 1`, which the installer sets) |
+| Dev PC | No `SiteProfile:Url` ⇒ the tags in `appsettings.json`, as always |
+
+- The profile is applied as one extra settings layer holding **only** the five sections, so it can never
+  change keys, the database or the licence address. Never logged except version + tag count; never served.
+- Settings files merge lists **by position**: tags left in a lower layer would be read too. The gateway
+  warns at startup if `appsettings.json` still has tags while a profile is in use.
+- Honest limit: an administrator of the client PC can read `License:Key` too, and the tags must be in
+  memory to read the PLC. This keeps them from ordinary users, the setup file and copies of the file.
+- The installer checks the cloud has the file **before** starting the gateway (`Assert-SiteProfile`), and on
+  an upgrade adds `SiteProfile:Url` + `Firebase:ClientId` to an older install's settings. The service
+  account gets Modify on `ProgramData\ShotSense\site` only.
+
+## Installation code comes from the cloud (2026-10-13)
+
+Clients → Edit → **Copy installation code** (`web/src/utils/installCode.ts` in the cloud repo), offered only
+while the dialog matches what is saved. It carries `siteProfileUrl` now, and the client's Cloudflare tunnel
+token, which the cloud stores with the client's keys (admins only). The wizard's code page is a large box
+with a **Paste** button; whitespace is ignored. Format: `INSTALLATION-CODE.md`.
 
 ## Installed gateway (installer, 2026-10-04)
 

@@ -69,6 +69,17 @@ if ($blanked -eq $text) { throw 'Could not find the connection strings in the pu
 [IO.File]::WriteAllText($appsettings, $blanked, (New-Object Text.UTF8Encoding($false)))
 Write-Host 'Development connection strings removed from the shipped appsettings.json.'
 
+# No client's tags ship in the installer: every installed gateway fetches its own tag file from the
+# cloud (PLCGateway/Hosting/SiteProfile.cs). These are SiteProfile.Sections — keep the two lists the
+# same. Settings files merge lists by position, so a tag left here would also be read on every client.
+$profileSections = 'Tags', 'ScanIntervalMs', 'CovRules', 'DataCollection', 'MaintenanceThresholds'
+$settings = [IO.File]::ReadAllText($appsettings) | ConvertFrom-Json
+foreach ($section in $profileSections) { $settings.PSObject.Properties.Remove($section) }
+[IO.File]::WriteAllText($appsettings, ($settings | ConvertTo-Json -Depth 20), (New-Object Text.UTF8Encoding($false)))
+$check = [IO.File]::ReadAllText($appsettings)
+if ($check -match '"Tags"|DB\d+\.DB[BWDX]') { throw 'Tag settings are still in the shipped appsettings.json. Refusing to build.' }
+Write-Host 'Tag settings removed from the shipped appsettings.json (each gateway fetches its own from the cloud).'
+
 # ---- 2. PostgreSQL ---------------------------------------------------------------------------
 Step "Staging PostgreSQL $pgVersion"
 $pg = Join-Path $staging 'pgsql'

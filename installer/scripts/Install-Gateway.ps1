@@ -34,6 +34,7 @@ $ErrorActionPreference = 'Stop'
 
 $DataDir      = Join-Path $env:ProgramData 'ShotSense'
 $LogsDir      = Join-Path $DataDir 'logs'
+$SiteDir      = Join-Path $DataDir 'site'      # the gateway's encrypted copy of the client's tag file
 $SettingsFile = Join-Path $DataDir 'appsettings.Production.json'
 $DbAdminFile  = Join-Path $DataDir 'db-admin.json'
 $PgData       = Join-Path $DataDir 'pgdata'
@@ -87,7 +88,7 @@ function Install-VcRuntime {
 }
 
 function Initialize-DataFolders {
-    New-Item -ItemType Directory -Force -Path $DataDir, $LogsDir | Out-Null
+    New-Item -ItemType Directory -Force -Path $DataDir, $LogsDir, $SiteDir | Out-Null
     # Settings and database files are not for ordinary users of this PC. Logs stay readable to
     # administrators; the gateway service is given its own rights further down.
     Set-PrivateAcl -Path $DataDir -Folder
@@ -162,6 +163,9 @@ function Write-Settings($Code, [int]$PgPort, [string]$DbPassword, [string]$JwtKe
         Jwt               = [ordered]@{ Key = [string]$JwtKey }
         Admin             = [ordered]@{ ApiKey = [string]$Code.adminApiKey }
         License           = [ordered]@{ CheckUrl = [string]$Code.licenseCheckUrl; Key = [string]$Code.licenseKey }
+        # Email sign-in accepts only this client's people; the tag file comes from the cloud.
+        Firebase          = [ordered]@{ ClientId = [string]$Code.clientId }
+        SiteProfile       = [ordered]@{ Url = [string]$Code.siteProfileUrl }
         ShotSense         = [ordered]@{
             ClientId       = [string]$Code.clientId
             ClientName     = [string]$Code.clientName
@@ -198,11 +202,14 @@ function Register-GatewayService {
     Invoke-Quiet sc.exe @('failure', $GatewayService, 'reset=', '86400', 'actions=', 'restart/60000/restart/60000/restart/60000')
     Invoke-Quiet sc.exe @('failureflag', $GatewayService, '1')
 
-    # What the service account may touch: read its program folder and settings, write its logs.
+    # What the service account may touch: read its program folder and settings, write its logs and
+    # its saved copy of the tag file.
     $icacls = "$env:WINDIR\System32\icacls.exe"
+    New-Item -ItemType Directory -Force -Path $SiteDir | Out-Null
     Invoke-Native -FilePath $icacls -Arguments @((Split-Path $GatewayExe -Parent), '/grant', "${GatewayAccount}:(OI)(CI)RX") | Out-Null
     Invoke-Native -FilePath $icacls -Arguments @($DataDir, '/grant', "${GatewayAccount}:(RX)") | Out-Null
     Invoke-Native -FilePath $icacls -Arguments @($LogsDir, '/grant', "${GatewayAccount}:(OI)(CI)M") | Out-Null
+    Invoke-Native -FilePath $icacls -Arguments @($SiteDir, '/grant', "${GatewayAccount}:(OI)(CI)M") | Out-Null
     Invoke-Native -FilePath $icacls -Arguments @($SettingsFile, '/grant', "${GatewayAccount}:R") | Out-Null
 }
 
@@ -216,6 +223,51 @@ function Set-FirewallRule {
     } else {
         Write-Log 'Firewall: dashboard reachable from this PC only.'
     }
+}
+
+# The gateway reads the PLC with the client's tag file, fetched from the cloud when it starts (it keeps
+# an encrypted copy for starts without internet). With no file in the cloud it cannot start, so say
+# so now, plainly, instead of after a three-minute wait for a gateway that never answers.
+function Assert-SiteProfile([string]$Url, [string]$LicenseKey) {
+    if ([string]::IsNullOrWhiteSpace($Url)) { return }
+    try {
+        $response = Invoke-WebRequest -Uri $Url -Headers @{ 'X-License-Key' = $LicenseKey } -UseBasicParsing -TimeoutSec 30
+        $tags = @((($response.Content | ConvertFrom-Json).profile.Tags)).Count
+        Write-Log "Tag file found in the cloud ($tags tags)."
+    } catch {
+        $status = 0
+        if ($_.Exception.Response) { $status = [int]$_.Exception.Response.StatusCode }
+        if ($status -eq 404) {
+            throw 'There is no tag file for this client in the cloud yet. Upload it (cloud: Clients, Edit on this client, Tag Settings File), then run setup again.'
+        }
+        if ($status -eq 403) {
+            throw 'The cloud refused this installation''s licence key when fetching the tag file. Copy a fresh installation code from the cloud and run setup again.'
+        }
+        throw "The tag file could not be fetched from the cloud ($($_.Exception.Message)). Check this PC's internet connection and run setup again."
+    }
+}
+
+# Installs from before 2026-10-13 have no tag file address or email client id in their settings: add
+# them, from the licence check address and the client id the install already has.
+function Update-SettingsForUpgrade {
+    $existing = Get-ExistingSettings
+    if (-not $existing) { return $null }
+    $changed = $false
+    if (-not $existing.SiteProfile -or [string]::IsNullOrWhiteSpace([string]$existing.SiteProfile.Url)) {
+        $url = Get-SiteProfileUrl ([string]$existing.License.CheckUrl)
+        $existing | Add-Member -NotePropertyName SiteProfile -NotePropertyValue ([pscustomobject]@{ Url = [string]$url }) -Force
+        $changed = $true
+    }
+    if (-not $existing.Firebase -and $existing.ShotSense -and $existing.ShotSense.ClientId) {
+        $existing | Add-Member -NotePropertyName Firebase -NotePropertyValue ([pscustomobject]@{ ClientId = [string]$existing.ShotSense.ClientId }) -Force
+        $changed = $true
+    }
+    if ($changed) {
+        [IO.File]::WriteAllText($SettingsFile, ($existing | ConvertTo-Json -Depth 5), (New-Object Text.UTF8Encoding($false)))
+        Set-PrivateAcl -Path $SettingsFile
+        Write-Log 'Settings: added the tag file address and the email sign-in client id.'
+    }
+    return $existing
 }
 
 function Start-GatewayAndWait {
@@ -333,6 +385,7 @@ function Invoke-FreshOrRestore {
         Write-Log 'Restore: keeping the dashboard logins already in the database.'
     }
 
+    Assert-SiteProfile -Url ([string]$code.siteProfileUrl) -LicenseKey ([string]$code.licenseKey)
     Register-GatewayService
     Set-FirewallRule
     Start-GatewayAndWait
@@ -352,7 +405,10 @@ function Invoke-Upgrade {
     $dbAdmin = Get-Content -Raw $DbAdminFile | ConvertFrom-Json
     Start-PostgresAndWait ([int]$dbAdmin.port)
 
-    # Settings stay as they are; only the service registration is refreshed.
+    # Settings stay as they are, apart from the two added for the cloud tag file and email sign-in;
+    # the service registration is refreshed.
+    $upgraded = Update-SettingsForUpgrade
+    if ($upgraded) { Assert-SiteProfile -Url ([string]$upgraded.SiteProfile.Url) -LicenseKey ([string]$upgraded.License.Key) }
     Register-GatewayService
     Start-GatewayAndWait   # the gateway brings its schema up to date as it starts
 

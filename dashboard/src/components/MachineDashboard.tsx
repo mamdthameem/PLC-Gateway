@@ -11,7 +11,6 @@ import {
   submitFilterRequest, pollFilterStatus, fetchFilterRequest, FilterRequestError,
 } from '../services/filterService';
 import { filterToSearchParams, filterFromSearchParams, requestFromInfo } from '../utils/filterUrl';
-import { useAuth } from '../contexts/AuthContext';
 import {
   SECTION1_ONLY_PARAM_KEYS, SHARED_PARAM_KEYS,
   type FilterRequest, type Section2ParamKey,
@@ -92,7 +91,6 @@ export const MachineDashboard: React.FC = () => {
   // kept on the server except the saved calculation itself, which is looked up by its own id - so
   // two people filtering at the same time cannot change each other's dashboard.
   const [searchParams, setSearchParams] = useSearchParams();
-  const { logout } = useAuth();
   const [calcState, setCalcState] = useState<FilterCalcState>('idle');
   const [applied, setApplied]     = useState<AppliedContext | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -182,7 +180,9 @@ export const MachineDashboard: React.FC = () => {
       })
       .catch(e => {
         if (!active) return;
-        if (e instanceof FilterRequestError && e.status === 401) { logout(); return; }
+        // A refused sign-in has already ended the session (apiFetch), and the login page brings
+        // the user back to this same link.
+        if (e instanceof FilterRequestError && (e.status === 401 || e.status === 403)) return;
         // Gone or unreadable: keep the filter in the bar so it can be applied again, drop the id.
         setRestoreNote(e instanceof FilterRequestError && e.status === 404
           ? 'The saved result in this link no longer exists. Its filter is filled in below: press Apply Filter to calculate it again.'

@@ -50,6 +50,7 @@ $payload = [ordered]@{
     licenseKey      = [string]$licenseKey
     adminApiKey     = [string]$adminApiKey
     tunnelToken     = [string]$tunnelToken
+    siteProfileUrl  = [string](Get-SiteProfileUrl $LicenseCheckUrl)
 }
 $json = $payload | ConvertTo-Json -Compress
 $b64url = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json)).TrimEnd('=').Replace('+', '-').Replace('/', '_')

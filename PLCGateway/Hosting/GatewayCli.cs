@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging.Abstractions;
+using PlcApi.Auth;
 using PlcApi.Services;
 
 namespace PlcApi.Hosting;
@@ -13,6 +14,8 @@ namespace PlcApi.Hosting;
 //   PLCGateway.exe --migrate-only      bring the schema up to date and exit
 //   PLCGateway.exe --create-admin      add the first dashboard login (admin role)
 //   PLCGateway.exe --set-password      set a new password for an existing login
+//   PLCGateway.exe --hash-password     print the hash for the emergency local admin's password
+//                                      (Auth:LocalAdmin:PasswordHash); touches no database
 //
 // Usernames and passwords come from environment variables when the installer runs them
 // (SHOTSENSE_ADMIN_USERNAME / SHOTSENSE_ADMIN_PASSWORD), so they never appear on a command line or
@@ -22,7 +25,7 @@ namespace PlcApi.Hosting;
 // Exit codes: 0 done, 1 failed, 2 wrong usage, 3 --create-admin found the login already exists.
 public static class GatewayCli
 {
-    private static readonly string[] Commands = { "--init-database", "--migrate-only", "--create-admin", "--set-password" };
+    private static readonly string[] Commands = { "--init-database", "--migrate-only", "--create-admin", "--set-password", "--hash-password" };
 
     private static readonly Regex UsernamePattern = new("^[A-Za-z0-9._@-]{3,64}$");
 
@@ -40,6 +43,7 @@ public static class GatewayCli
                 "--migrate-only"  => await MigrateOnlyAsync(config),
                 "--create-admin"  => await CreateAdminAsync(args, config),
                 "--set-password"  => await SetPasswordAsync(args, config),
+                "--hash-password" => HashPassword(config),
                 _                 => 2,
             };
         }
@@ -110,6 +114,33 @@ public static class GatewayCli
         }
 
         Console.WriteLine($"Password changed for '{username}'. Use the new password at the next sign-in.");
+        return 0;
+    }
+
+    // The emergency local admin's password lives only as a hash in the settings file, so nothing on
+    // the PC can show it. This prints the hash and where it goes; the password itself is never shown
+    // or stored.
+    private static int HashPassword(IConfiguration config)
+    {
+        string username = GatewayAuth.LocalAdminUsername(config);
+        string? password = AskNewPassword(username);
+        if (password is null) return 2;
+
+        string hash = PasswordHasher.Hash(password);
+        Console.WriteLine();
+        Console.WriteLine("Put this in appsettings.Production.json (on an installed gateway:");
+        Console.WriteLine(@"C:\ProgramData\ShotSense\appsettings.Production.json), then restart the gateway:");
+        Console.WriteLine();
+        Console.WriteLine($$"""
+          "Auth": {
+            "LocalAdmin": {
+              "Username": "{{username}}",
+              "PasswordHash": "{{hash}}"
+            }
+          }
+        """);
+        Console.WriteLine();
+        Console.WriteLine($"Sign in with '{username}' from the plant network: login page → \"Local admin login\".");
         return 0;
     }
 

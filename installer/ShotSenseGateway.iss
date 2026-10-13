@@ -74,7 +74,8 @@ Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; \
 [Code]
 var
   InstallMode: String;
-  CodePage: TInputQueryWizardPage;
+  CodePage: TWizardPage;
+  CodeMemo: TNewMemo;
   PlcPage: TInputQueryWizardPage;
   AdminPage: TInputQueryWizardPage;
   NetworkPage: TInputOptionWizardPage;
@@ -123,14 +124,55 @@ end;
 
 { ---- Pages --------------------------------------------------------------------------------- }
 
-procedure InitializeWizard;
+{ The installation code is about 900 characters, so it gets a large box that wraps, plus a Paste
+  button: a one-line field hid almost all of it and made a bad paste impossible to spot. Line breaks
+  and spaces in it are ignored when it is read. }
+function InstallCodeText: String;
 begin
-  CodePage := CreateInputQueryPage(wpWelcome,
+  Result := Trim(CodeMemo.Text);
+end;
+
+procedure PasteCodeClick(Sender: TObject);
+begin
+  CodeMemo.Text := '';
+  CodeMemo.PasteFromClipboard;
+end;
+
+procedure InitializeWizard;
+var
+  CodeHelp: TNewStaticText;
+  PasteButton: TNewButton;
+begin
+  CodePage := CreateCustomPage(wpWelcome,
     'Installation code',
-    'Paste the code the ShotSense cloud showed when this client was registered.',
-    'The code carries this client''s licence, its cloud keys and its internet address. ' +
-    'It starts with SSG1. Treat it like a password.');
-  CodePage.Add('Installation code:', False);
+    'Paste the code the ShotSense cloud showed for this client.');
+
+  CodeHelp := TNewStaticText.Create(CodePage);
+  CodeHelp.Parent := CodePage.Surface;
+  CodeHelp.WordWrap := True;
+  CodeHelp.Width := CodePage.SurfaceWidth;
+  CodeHelp.Caption :=
+    'In the cloud: Clients, then Edit on this client, then "Copy installation code". ' +
+    'Then click Paste below. The code starts with SSG1. and carries this client''s licence, ' +
+    'keys, tag file address and internet address. Treat it like a password.';
+
+  PasteButton := TNewButton.Create(CodePage);
+  PasteButton.Parent := CodePage.Surface;
+  PasteButton.Caption := '&Paste';
+  PasteButton.Top := CodeHelp.Top + CodeHelp.Height + ScaleY(10);
+  PasteButton.Width := ScaleX(90);
+  PasteButton.Height := ScaleY(25);
+  PasteButton.OnClick := @PasteCodeClick;
+
+  CodeMemo := TNewMemo.Create(CodePage);
+  CodeMemo.Parent := CodePage.Surface;
+  CodeMemo.Top := PasteButton.Top + PasteButton.Height + ScaleY(8);
+  CodeMemo.Width := CodePage.SurfaceWidth;
+  CodeMemo.Height := CodePage.SurfaceHeight - CodeMemo.Top;
+  CodeMemo.ScrollBars := ssVertical;
+  CodeMemo.WordWrap := True;
+  CodeMemo.WantReturns := False;
+  CodeMemo.Font.Name := 'Consolas';
 
   PlcPage := CreateInputQueryPage(CodePage.ID,
     'PLC connection',
@@ -281,7 +323,7 @@ begin
 
   if CurPageID = CodePage.ID then
   begin
-    Result := CheckInstallCode(Trim(CodePage.Values[0]));
+    Result := CheckInstallCode(InstallCodeText);
     if Result then
     begin
       if PublicHostname <> '' then
@@ -374,7 +416,7 @@ begin
       ' -PlcRack ' + Trim(PlcPage.Values[1]) +
       ' -PlcSlot ' + Trim(PlcPage.Values[2]);
 
-  SetEnvironmentVariable('SHOTSENSE_INSTALL_CODE', Trim(CodePage.Values[0]));
+  SetEnvironmentVariable('SHOTSENSE_INSTALL_CODE', InstallCodeText);
   SetEnvironmentVariable('SHOTSENSE_ADMIN_USERNAME', Trim(AdminPage.Values[0]));
   SetEnvironmentVariable('SHOTSENSE_ADMIN_PASSWORD', AdminPage.Values[1]);
   try

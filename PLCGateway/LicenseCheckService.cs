@@ -6,7 +6,9 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using System.Text.Json;
 using Npgsql;
+using PlcApi.Hosting;
 using PlcApi.Services;
 
 /// <summary>
@@ -28,6 +30,11 @@ using PlcApi.Services;
 ///
 /// The grace anchor is saved (gateway_license_state) together with the URL it belongs to, so a
 /// restart does not reset it and a success from a different licence server does not carry over.
+///
+/// A successful answer also carries the version of the client's tag file in the cloud
+/// (siteProfileVersion). When it differs from the one this run uses, the new file is downloaded and
+/// saved, and the gateway stops with exit code 1 so the Windows service restarts it on the new tags
+/// (see SiteProfile). No extra calls to the cloud: it rides on the hourly check.
 /// </summary>
 public class LicenseCheckService : BackgroundService
 {
@@ -38,17 +45,27 @@ public class LicenseCheckService : BackgroundService
 
     private readonly ILogger<LicenseCheckService> _logger;
     private readonly LicenseState _state;
+    private readonly SiteProfileState _siteProfile;
+    private readonly IHostApplicationLifetime _lifetime;
     private readonly string _connectionString;
 
     private readonly string? _checkUrl;
     private readonly string? _licenseKey;
+    private readonly string? _siteProfileUrl;
     private readonly int _intervalMinutes;
     private readonly int _graceHours;
 
-    public LicenseCheckService(ILogger<LicenseCheckService> logger, IConfiguration config, LicenseState state)
+    /// <summary>The tag-file version the last successful check reported, if any.</summary>
+    private string? _cloudProfileVersion;
+
+    public LicenseCheckService(ILogger<LicenseCheckService> logger, IConfiguration config, LicenseState state,
+        SiteProfileState siteProfile, IHostApplicationLifetime lifetime)
     {
-        _logger = logger;
-        _state  = state;
+        _logger      = logger;
+        _state       = state;
+        _siteProfile = siteProfile;
+        _lifetime    = lifetime;
+        _siteProfileUrl = config["SiteProfile:Url"]?.Trim() is { Length: > 0 } profileUrl ? profileUrl : null;
         _connectionString = config.GetConnectionString("PostgresDb")
             ?? config.GetValue<string>("PostgreSQL:ConnectionString")
             ?? throw new InvalidOperationException("Connection string is required.");
@@ -96,6 +113,7 @@ public class LicenseCheckService : BackgroundService
             {
                 graceAnchor = now;
                 await SaveAnchorAsync(now);
+                await RefreshSiteProfileAsync(stoppingToken);
             }
 
             var status = result switch
@@ -131,7 +149,11 @@ public class LicenseCheckService : BackgroundService
                 req.Headers.Add("X-License-Key", _licenseKey);
             using var resp = await Http.SendAsync(req, ct);
 
-            if (resp.IsSuccessStatusCode) return CheckResult.Valid;
+            if (resp.IsSuccessStatusCode)
+            {
+                _cloudProfileVersion = await ReadProfileVersionAsync(resp, ct);
+                return CheckResult.Valid;
+            }
             if (resp.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.PaymentRequired or HttpStatusCode.Forbidden)
                 return CheckResult.Rejected;
 
@@ -146,6 +168,48 @@ public class LicenseCheckService : BackgroundService
         {
             _logger.LogWarning(ex, "Licence server could not be reached.");
             return CheckResult.Unreachable;
+        }
+    }
+
+    /// <summary>siteProfileVersion from the licence answer; null when absent (an older cloud) or unreadable.</summary>
+    private static async Task<string?> ReadProfileVersionAsync(HttpResponseMessage resp, CancellationToken ct)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
+            return doc.RootElement.TryGetProperty("siteProfileVersion", out var v) && v.ValueKind == JsonValueKind.String
+                ? v.GetString()
+                : null;
+        }
+        catch (JsonException) { return null; }
+    }
+
+    /// <summary>
+    /// A newer tag file in the cloud: download it, save it, and stop with exit code 1 so the service
+    /// restarts on it. Only for a gateway whose tags come from the cloud in the first place.
+    /// </summary>
+    private async Task RefreshSiteProfileAsync(CancellationToken ct)
+    {
+        if (_siteProfile.Version is null || _siteProfileUrl is null || _licenseKey is null || _siteProfile.RestartRequested) return;
+        if (string.IsNullOrEmpty(_cloudProfileVersion) || _cloudProfileVersion == _siteProfile.Version) return;
+
+        try
+        {
+            var profile = await SiteProfile.DownloadAsync(_siteProfileUrl, _licenseKey, ct);
+            SiteProfile.SaveCache(profile, _licenseKey);
+            _logger.LogWarning("A new tag file was uploaded in the cloud (version {version}, {tags} tags). " +
+                               "The gateway is stopping to start again on it; as a service it is back within a minute.",
+                               profile.Version, profile.TagCount);
+            _siteProfile.RestartRequested = true;
+            _lifetime.StopApplication();
+        }
+        catch (SiteProfileException ex)
+        {
+            _logger.LogWarning("A new tag file is in the cloud, but it could not be fetched: {reason} Keeping the current one.", ex.Message);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException)
+        {
+            _logger.LogWarning(ex, "A new tag file was fetched but could not be saved. Keeping the current one.");
         }
     }
 

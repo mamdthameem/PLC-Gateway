@@ -48,13 +48,36 @@ const inputSx = {
   },
 };
 
+/**
+ * Which form is showing. "email" is the normal sign-in (one account per person); "shared" is the old
+ * username/password, offered only while the gateway still has it on; "local" is the emergency admin,
+ * reached by a deliberately quiet link that appears only on the plant network.
+ */
+type Mode = 'email' | 'shared' | 'local';
+
+const MODE_TEXT: Record<Mode, { subtitle: string; idLabel: string; idType: string; idAutocomplete: string }> = {
+  email:  { subtitle: 'Sign in with your email to access your machine dashboard', idLabel: 'Email',    idType: 'email', idAutocomplete: 'username' },
+  shared: { subtitle: 'Sign in with the shared username and password',            idLabel: 'Username', idType: 'text',  idAutocomplete: 'username' },
+  local:  { subtitle: 'Local admin: for when the internet is down. Plant network only', idLabel: 'Username', idType: 'text', idAutocomplete: 'off' },
+};
+
+const quietLinkSx = {
+  background: 'none', border: 'none', p: 0, cursor: 'pointer',
+  fontSize: '0.75rem', color: 'rgba(255,255,255,0.45)', textDecoration: 'underline',
+  '&:hover': { color: '#ffffff' },
+};
+
 export const Login: React.FC = () => {
   const [username, setUsername]       = useState('');
   const [password, setPassword]       = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError]             = useState<string | null>(null);
+  const [info, setInfo]               = useState<string | null>(null);
   const [loading, setLoading]         = useState(false);
-  const { login }  = useAuth();
+  const [chosenMode, setChosenMode]   = useState<Mode | null>(null);
+  const {
+    options, optionsError, sessionMessage, loginWithEmail, loginShared, loginLocalAdmin, sendPasswordReset,
+  } = useAuth();
   const navigate   = useNavigate();
   const location   = useLocation();
   // Where ProtectedRoute sent the user from. Only a path inside this app is accepted, never a full
@@ -62,12 +85,27 @@ export const Login: React.FC = () => {
   const from = (location.state as { from?: unknown } | null)?.from;
   const returnTo = typeof from === 'string' && from.startsWith('/') && !from.startsWith('//') ? from : '/dashboard';
 
+  // Email sign-in when the gateway offers it; otherwise the shared login while it is still on.
+  const mode: Mode = chosenMode ?? (options?.emailLogin || !options?.legacyLogin ? 'email' : 'shared');
+  const text = MODE_TEXT[mode];
+  const shownError = error ?? optionsError ?? sessionMessage;
+
+  const switchMode = (next: Mode) => {
+    setChosenMode(next);
+    setError(null);
+    setInfo(null);
+    setUsername('');
+    setPassword('');
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setInfo(null);
     setLoading(true);
     try {
-      const result = await login(username, password);
+      const signIn = mode === 'email' ? loginWithEmail : mode === 'shared' ? loginShared : loginLocalAdmin;
+      const result = await signIn(username, password);
       if (result.success) {
         navigate(returnTo, { replace: true });
       } else {
@@ -77,6 +115,19 @@ export const Login: React.FC = () => {
       setError('An unexpected error occurred. Please try again.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Firebase emails a link to set a new password. Nobody — not even an administrator — can see or
+  // choose someone else's password; this link is the only way to recover one.
+  const handleForgot = async () => {
+    setError(null);
+    setInfo(null);
+    const result = await sendPasswordReset(username);
+    if (result.success) {
+      setInfo(`If ${username.trim()} has an account, an email with a link to set a new password is on its way. Check your inbox.`);
+    } else {
+      setError(result.error ?? 'Could not send the email. Try again.');
     }
   };
 
@@ -342,13 +393,31 @@ export const Login: React.FC = () => {
                 fontWeight: 400,
               }}
             >
-              Sign in to access your machine dashboard
+              {text.subtitle}
             </Typography>
           </Box>
 
-          {/* Error */}
+          {/* Password-reset email sent */}
+          {info && (
+            <Alert
+              severity="success"
+              sx={{
+                mb: 2.5,
+                bgcolor: 'rgba(34,197,94,0.1)',
+                border: '1px solid rgba(34,197,94,0.3)',
+                color: '#86efac',
+                borderRadius: '12px',
+                fontSize: '0.82rem',
+                '& .MuiAlert-icon': { color: '#86efac' },
+              }}
+            >
+              {info}
+            </Alert>
+          )}
+
+          {/* Error — a failed sign-in, or why the last session ended */}
           <AnimatePresence>
-            {error && (
+            {shownError && (
               <motion.div
                 initial={{ opacity: 0, height: 0, y: -6 }}
                 animate={{ opacity: 1, height: 'auto', y: 0 }}
@@ -367,7 +436,7 @@ export const Login: React.FC = () => {
                     '& .MuiAlert-icon': { color: '#fca5a5' },
                   }}
                 >
-                  {error}
+                  {shownError}
                 </Alert>
               </motion.div>
             )}
@@ -376,11 +445,13 @@ export const Login: React.FC = () => {
           {/* Form */}
           <Box component="form" onSubmit={handleSubmit} sx={{ width: '100%' }}>
             <TextField
+              key={mode}
               margin="normal"
               required
               fullWidth
-              label="Username"
-              autoComplete="username"
+              label={text.idLabel}
+              type={text.idType}
+              autoComplete={text.idAutocomplete}
               autoFocus
               value={username}
               onChange={e => setUsername(e.target.value)}
@@ -402,7 +473,7 @@ export const Login: React.FC = () => {
               fullWidth
               label="Password"
               type={showPassword ? 'text' : 'password'}
-              autoComplete="current-password"
+              autoComplete={mode === 'local' ? 'off' : 'current-password'}
               value={password}
               onChange={e => setPassword(e.target.value)}
               sx={inputSx}
@@ -464,6 +535,37 @@ export const Login: React.FC = () => {
             >
               {loading ? 'Authenticating…' : 'Sign In'}
             </Button>
+          </Box>
+
+          {/* Other ways in. "Forgot password?" is for email accounts only. The shared login is
+              offered while the gateway still has it on. "Local admin login" is deliberately quiet,
+              and the gateway only offers it to a browser on the plant network. */}
+          <Box sx={{ mt: 2.5, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1.25 }}>
+            {mode === 'email' && options?.firebase && (
+              <Box component="button" type="button" onClick={handleForgot} sx={quietLinkSx}>
+                Forgot password?
+              </Box>
+            )}
+            {mode !== 'email' && options?.emailLogin && (
+              <Box component="button" type="button" onClick={() => switchMode('email')} sx={quietLinkSx}>
+                Sign in with your email instead
+              </Box>
+            )}
+            {mode !== 'shared' && options?.legacyLogin && (
+              <Box component="button" type="button" onClick={() => switchMode('shared')} sx={quietLinkSx}>
+                Use the shared username and password
+              </Box>
+            )}
+            {mode !== 'local' && options?.localAdmin && (
+              <Box
+                component="button"
+                type="button"
+                onClick={() => switchMode('local')}
+                sx={{ ...quietLinkSx, fontSize: '0.68rem', color: 'rgba(255,255,255,0.22)', textDecoration: 'none' }}
+              >
+                Local admin login
+              </Box>
+            )}
           </Box>
 
           {/* Footer note */}

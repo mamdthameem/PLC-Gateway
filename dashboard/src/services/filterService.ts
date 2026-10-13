@@ -3,21 +3,11 @@ import type {
   FilteredMetalProduction, FilteredAmps, FilterRequestInfo,
 } from '../types';
 
-import { API_BASE } from './apiBase';
-
-function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem('plc_gateway_token');
-  const isJwt = token && token.includes('.') && !token.startsWith('local-');
-  return {
-    'Content-Type': 'application/json',
-    ...(isJwt ? { Authorization: `Bearer ${token}` } : {}),
-  };
-}
+import { apiFetch } from './apiClient';
 
 export async function submitFilterRequest(req: FilterRequest): Promise<number> {
-  const res = await fetch(`${API_BASE}/api/filter`, {
+  const res = await apiFetch(`/api/filter`, {
     method: 'POST',
-    headers: authHeaders(),
     body: JSON.stringify(req),
   });
   if (!res.ok) throw new Error(`Filter submit failed: ${res.status} ${res.statusText}`);
@@ -39,31 +29,25 @@ export class FilterRequestError extends Error {
  * Requires a signed-in user (the API answers 401 otherwise).
  */
 export async function fetchFilterRequest(requestId: number): Promise<FilterRequestInfo> {
-  const res = await fetch(`${API_BASE}/api/filter/${requestId}`, { headers: authHeaders() });
+  const res = await apiFetch(`/api/filter/${requestId}`);
   if (!res.ok) throw new FilterRequestError(`Request ${requestId} lookup failed: ${res.status}`, res.status);
   return res.json() as Promise<FilterRequestInfo>;
 }
 
 export async function pollFilterStatus(requestId: number): Promise<FilterStatus> {
-  const res = await fetch(`${API_BASE}/api/filter/${requestId}/status`, {
-    headers: authHeaders(),
-  });
+  const res = await apiFetch(`/api/filter/${requestId}/status`);
   if (!res.ok) throw new Error(`Status poll failed: ${res.status} ${res.statusText}`);
   return res.json() as Promise<FilterStatus>;
 }
 
 export async function fetchFilterResults(requestId: number): Promise<FilterResult[]> {
-  const res = await fetch(`${API_BASE}/api/filter/${requestId}/results`, {
-    headers: authHeaders(),
-  });
+  const res = await apiFetch(`/api/filter/${requestId}/results`);
   if (!res.ok) throw new Error(`Results fetch failed: ${res.status} ${res.statusText}`);
   return res.json() as Promise<FilterResult[]>;
 }
 
 export async function fetchFilterCycles(requestId: number): Promise<FilteredCycle[]> {
-  const res = await fetch(`${API_BASE}/api/filter/${requestId}/cycles`, {
-    headers: authHeaders(),
-  });
+  const res = await apiFetch(`/api/filter/${requestId}/cycles`);
   if (!res.ok) throw new Error(`Cycles fetch failed: ${res.status} ${res.statusText}`);
   return res.json() as Promise<FilteredCycle[]>;
 }
@@ -74,9 +58,7 @@ export async function fetchFilterCycles(requestId: number): Promise<FilteredCycl
  * accumulator instead, so the two figures answer different questions and need not match.
  */
 export async function fetchFilterMetals(requestId: number): Promise<FilteredMetalProduction[]> {
-  const res = await fetch(`${API_BASE}/api/filter/${requestId}/metals`, {
-    headers: authHeaders(),
-  });
+  const res = await apiFetch(`/api/filter/${requestId}/metals`);
   if (!res.ok) throw new Error(`Metal production fetch failed: ${res.status} ${res.statusText}`);
   return res.json() as Promise<FilteredMetalProduction[]>;
 }
@@ -90,9 +72,7 @@ export async function fetchFilterMetals(requestId: number): Promise<FilteredMeta
  * cycles instead of "last completed cycle".
  */
 export async function fetchFilterAmps(requestId: number): Promise<FilteredAmps[]> {
-  const res = await fetch(`${API_BASE}/api/filter/${requestId}/amps`, {
-    headers: authHeaders(),
-  });
+  const res = await apiFetch(`/api/filter/${requestId}/amps`);
   if (!res.ok) throw new Error(`Filter amps fetch failed: ${res.status} ${res.statusText}`);
   return res.json() as Promise<FilteredAmps[]>;
 }

@@ -31,9 +31,14 @@ keeps the data folder, and a different major version can't open it.
 
 ## What the setup does
 
-Pages: **installation code** (from the cloud, see `INSTALLATION-CODE.md`) → **PLC** IP, rack and slot →
-**dashboard login** (username, and a password of at least 12 characters, typed twice) → **plant network**
-checkbox → install folder.
+Pages: **installation code** (a large box with a **Paste** button; copy it in the cloud with Clients →
+Edit → Copy installation code, see `INSTALLATION-CODE.md`) → **PLC** IP, rack and slot → **dashboard
+login** (username, and a password of at least 12 characters, typed twice) → **plant network** checkbox →
+install folder.
+
+**Before installing, upload the client's tag file in the cloud** (Clients → Edit → Tag Settings File). The
+setup ships no tags; the gateway fetches them from the cloud and setup stops with that message if there is
+no file yet.
 
 Then `scripts\Install-Gateway.ps1`:
 
@@ -41,9 +46,10 @@ Then `scripts\Install-Gateway.ps1`:
 2. Creates a private PostgreSQL in `C:\ProgramData\ShotSense\pgdata` as the `ShotSensePostgres`
    service: port 5432, or 5433 and up if the PC already has a PostgreSQL. It accepts local
    connections only, and its superuser password is random.
-3. Writes `C:\ProgramData\ShotSense\appsettings.Production.json` (keys from the code, plus a random
-   database password and JWT key). Only administrators and the gateway can read it.
-4. Creates the database and schema, then the dashboard login.
+3. Writes `C:\ProgramData\ShotSense\appsettings.Production.json` (keys, tag file address and email
+   sign-in client id from the code, plus a random database password and JWT key). Only administrators
+   and the gateway can read it.
+4. Creates the database and schema, then the dashboard login. Checks the cloud has this client's tag file.
 5. Registers `ShotSenseGateway`: delayed automatic start, waits for the database, restarts itself
    after a failure. It runs as its own low-privilege account, not LocalSystem.
 6. With the checkbox ticked, opens TCP 5200 for Private and Domain networks only, never Public.
@@ -64,8 +70,9 @@ Everything is logged to `C:\ProgramData\ShotSense\logs\install-*.log`. No secret
 
 ## Testing a build (clean PC or VM)
 
-1. Make a code: register a test client in the cloud, create a tunnel for a test hostname (steps in
-   `INSTALLATION-CODE.md`), then run `tools\New-InstallCode.ps1`.
+1. Register a test client in the cloud, create a tunnel for a test hostname (steps in
+   `INSTALLATION-CODE.md`) and paste its token into the client, upload a tag file
+   (`tools\Export-SiteProfile.ps1` makes one), then **Copy installation code**.
 2. Run the setup. Windows shows "Windows protected your PC" because the setup isn't code-signed yet:
    choose **More info → Run anyway**.
 3. Check:
