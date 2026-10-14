@@ -80,8 +80,10 @@ For each client:
    **Cloudflared**. Name it after the client.
 2. On the install step, copy the token: it's the long value after `cloudflared.exe service install`.
    Ignore the command itself; the installer runs it.
-3. **Public hostname**: subdomain `clientname`, domain `shotsense.com`, service **HTTP**,
-   URL `localhost:5200`.
+3. **Public hostname**: subdomain `clientname`, your domain, service type **HTTP** (not HTTPS),
+   URL `localhost:5200`. The gateway serves plain HTTP on that port; Cloudflare adds the HTTPS for
+   visitors. Choosing HTTPS here gives every visitor **502 Bad Gateway** while the tunnel itself
+   shows healthy.
 4. Paste the token into the client's **Cloudflare Tunnel Token** field in the cloud and save. The
    cloud stores it with the client's keys (admins only) and puts it into the code.
 
