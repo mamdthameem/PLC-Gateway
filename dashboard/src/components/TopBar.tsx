@@ -25,9 +25,10 @@ import { useNotifications } from '../contexts/NotificationContext';
 import { useAuth } from '../contexts/AuthContext';
 import BB8Toggle from './ui/star-wars-toggle-switch';
 
-// What the role chip says. The emergency login is named as such, so nobody mistakes it for an account.
+// What the role chip says. The emergency login and ShotSense office staff are named as such, so nobody
+// mistakes either for one of the site's own accounts.
 const roleLabel = (role: 'admin' | 'viewer', login: string) =>
-    login === 'local-admin' ? 'Local admin' : role === 'admin' ? 'Admin' : 'Viewer';
+    login === 'local-admin' ? 'Local admin' : login === 'office' ? 'ShotSense' : role === 'admin' ? 'Admin' : 'Viewer';
 
 export const TopBar: React.FC = () => {
     const location = useLocation();

@@ -22,6 +22,40 @@ Any change to that controller must update this file and `sample-response.json` i
 | `GET` | `/api/admin/filter/{id}/amps` | One filtered calculation's impeller current — tile averages plus the per-cycle chart points |
 | `GET` | `/api/admin/history` | Raw recorded readings of one tag, oldest first, in pages |
 | `PUT` | `/api/admin/settings/impellers` | Choose which impellers the site includes — **the only place this can be changed** |
+| `GET` | `/api/admin/tags` | Every tag in the site's tag file with its latest reading (the cloud's Tag check, office only) |
+| `GET` | `/api/admin/settings/plc` | Where the gateway reads the PLC, where that came from, whether it answers |
+| `PUT` | `/api/admin/settings/plc` | Set the PLC's address — applied within seconds, no restart |
+
+## Changes on 2026-10-26 — available impellers, tag check, PLC address
+
+Additive; nothing the cloud already calls changed shape.
+
+- **`/live` `impellers.available`** (`number[]`): the impellers the site's tag file has tags for (a
+  `Current_imp_N`, `Spares_Runhour_impN[..]`, `Spares trigger impN[..]` or `REPLACED_N[..]` tag).
+  `impellers.selected`, `amps`, `spareGrid` and `spareAlerts` never name any other impeller. Offer only
+  these; a gateway older than this does not send the field (offer 1–10 then).
+- **`PUT /api/admin/settings/impellers`** now answers **400** for an impeller not in `available`:
+  `{ "error": "This site's tag file has no tags for impeller 2. It has: 1." }`. Its 200 body gains
+  `available`.
+- **`GET /api/admin/tags`** — the Tag check. 200:
+  ```json
+  { "generatedAtUtc": "…Z", "plcConnected": true, "lastScanAt": "…Z",
+    "plc": { "ipAddress": "192.168.1.11", "rack": 0, "slot": 1 },
+    "tagFileVersion": "c8c5d5edbabcb31b",
+    "tags": [ { "name": "Machine status", "address": "DB600.DBX0.1", "dataType": "BOOL", "mode": "read",
+                "value": "1", "lastUpdated": "…Z", "isStale": false } ] }
+  ```
+  In tag-file order. `value` is the value string (same convention as `amps[]`), `null` when the gateway
+  has never stored a reading for that address; `lastUpdated` is the last read, not the last change. The
+  tag list is private to the office: never show it to a client's own people.
+- **`GET /api/admin/settings/plc`** — 200 `{ plc: { ipAddress, rack, slot }, source: "installer" | "cloud",
+  connected, lastScanAt }`. `source` says whether the address is still the installer's or was set here.
+- **`PUT /api/admin/settings/plc`** — body `{ "ipAddress": "192.168.1.11", "rack": 0, "slot": 1 }`.
+  Plant-network IPv4 only (10/8, 172.16/12, 192.168/16), rack 0–7, slot 0–31, else **400** `{ error }`
+  with the reason. Saved on the gateway (it wins over the installer's value from then on, restarts
+  included) and switched to between two scans. Waits up to ~10 s, then 200 `{ plc, source: "cloud",
+  applied, connected }` — `connected: false` means saved but the PLC does not answer there (yet); the
+  gateway keeps trying. Allow ~25 s.
 
 ## Changes on 2026-10-13 — impeller selection moves to the cloud
 

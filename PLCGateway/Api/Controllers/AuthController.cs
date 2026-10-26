@@ -11,25 +11,23 @@ namespace PlcApi.Controllers;
 
 // Dashboard sign-in. Email sign-in itself happens in the browser, against Firebase; the gateway only
 // checks the resulting token on each request (GatewayAuth). The endpoints here are what the login page
-// needs around that, plus the two logins whose tokens this gateway signs itself: the old shared
-// username/password, and the emergency local admin. See GatewayAuth for the rules.
+// needs around that, plus the one login whose token this gateway signs itself: the emergency local
+// admin. The shared username/password login was removed on 2026-10-26. See GatewayAuth for the rules.
 [ApiController]
 [Route("api/[controller]")]
 public class AuthController : ControllerBase
 {
     private readonly IConfiguration _config;
     private readonly ILogger<AuthController> _logger;
-    private readonly IUserService _users;
     private readonly JwtSigningKey _signingKey;
     private readonly LoginThrottle _throttle;
     private readonly FirebaseLogin _firebase;
 
-    public AuthController(IConfiguration config, ILogger<AuthController> logger, IUserService users,
+    public AuthController(IConfiguration config, ILogger<AuthController> logger,
         JwtSigningKey signingKey, LoginThrottle throttle, FirebaseLogin firebase)
     {
         _config     = config;
         _logger     = logger;
-        _users      = users;
         _signingKey = signingKey;
         _throttle   = throttle;
         _firebase   = firebase;
@@ -45,7 +43,6 @@ public class AuthController : ControllerBase
             ? new { apiKey = _firebase.ApiKey, authDomain = _firebase.AuthDomain, projectId = _firebase.ProjectId, appId = _firebase.AppId }
             : null,
         emailLogin  = _firebase.Enabled && _firebase.ClientId.Length > 0,
-        legacyLogin = GatewayAuth.LegacyLoginEnabled(_config),
         localAdmin  = GatewayAuth.LocalAdminHash(_config) is not null && NetworkOrigin.IsLocalNetwork(HttpContext),
     });
 
@@ -59,76 +56,17 @@ public class AuthController : ControllerBase
         name  = User.Identity?.Name ?? "",
         email = User.FindFirst(ClaimTypes.Email)?.Value ?? "",
         role  = User.FindFirst(ClaimTypes.Role)?.Value ?? GatewayAuth.RoleViewer,
-        login = User.FindFirst(GatewayAuth.LoginClaim)?.Value ?? GatewayAuth.LoginPassword,
+        login = User.FindFirst(GatewayAuth.LoginClaim)?.Value ?? GatewayAuth.LoginFirebase,
     });
 
-    // Anonymous: the OLD shared username/password login (users table). Kept until email sign-in has
-    // been tested, then switched off with Auth:LegacyLoginEnabled=false — which also voids every token
-    // it already issued (GatewayAuth.ValidateLocalToken).
+    // Anonymous: the emergency local admin, for when the site's internet is down and email sign-in
+    // cannot work. One account, its password hash in Auth:LocalAdmin:PasswordHash (set by the installer,
+    // or later with PLCGateway.exe --set-local-admin). Plant network only: through the Cloudflare tunnel
+    // this answers 404, as if it did not exist, and a token it issued is refused there too (GatewayAuth).
     //
     // Two limits guard it, both answering 429 with a message the login page shows as-is:
     //   - per visitor IP: 5 attempts a minute (rate-limit policy "login", see Program.cs);
-    //   - per account:    10 failures lock that login name for 15 minutes (LoginThrottle).
-    [HttpPost("login")]
-    [EnableRateLimiting("login")]
-    public async Task<IActionResult> Login([FromBody] LoginRequest request)
-    {
-        if (!GatewayAuth.LegacyLoginEnabled(_config))
-            return StatusCode(StatusCodes.Status403Forbidden,
-                new { message = "The shared login has been switched off. Sign in with your email address." });
-
-        var loginId = request.Username?.Trim();
-        if (string.IsNullOrWhiteSpace(loginId) || string.IsNullOrWhiteSpace(request.Password))
-            return Unauthorized(new { message = "Invalid credentials" });
-
-        if (LockedOut(loginId) is { } locked) return locked;
-
-        var user = await _users.FindByLoginAsync(loginId);
-        PasswordCheck check;
-        if (user is null)
-        {
-            PasswordHasher.VerifyAgainstDummy(request.Password);   // same cost as a real check
-            check = PasswordCheck.Failed;
-        }
-        else
-        {
-            check = PasswordHasher.Verify(request.Password, user.PasswordHash);
-        }
-
-        if (check == PasswordCheck.Failed)
-        {
-            _throttle.RecordFailure(loginId);
-            _logger.LogWarning("Failed dashboard sign-in for '{login}' from {ip}.", loginId, ClientAddress.Of(HttpContext));
-            return Unauthorized(new { message = "Invalid credentials" });
-        }
-
-        _throttle.RecordSuccess(loginId);
-
-        // An old-format hash (unsalted SHA-256, or fewer PBKDF2 iterations than today) is replaced
-        // now, while the plain password is in hand. A failure here must not block the sign-in.
-        if (check == PasswordCheck.SuccessNeedsRehash)
-        {
-            try
-            {
-                await _users.UpdatePasswordHashAsync(user!.Username, PasswordHasher.Hash(request.Password));
-                _logger.LogInformation("Upgraded the stored password hash for '{user}'.", user.Username);
-            }
-            catch (Exception ex) { _logger.LogError(ex, "Could not upgrade the password hash for '{user}'.", user!.Username); }
-        }
-
-        if (!user!.IsApproved)
-            return Unauthorized(new { message = "User is not approved for access" });
-
-        if (user.ValidUntilUtc.HasValue && DateTime.UtcNow > user.ValidUntilUtc.Value)
-            return Unauthorized(new { message = "User access has expired" });
-
-        return Ok(new { token = IssueToken(user.Username, user.Role, user.Id.ToString(), GatewayAuth.LoginPassword) });
-    }
-
-    // Anonymous: the emergency local admin, for when the site's internet is down and email sign-in
-    // cannot work. One account, its password hash in Auth:LocalAdmin:PasswordHash (made with
-    // PLCGateway.exe --hash-password). Plant network only: through the Cloudflare tunnel this answers
-    // 404, as if it did not exist, and a token it issued is refused there too (GatewayAuth).
+    //   - per account:    10 failures lock it for 15 minutes (LoginThrottle).
     [HttpPost("local-admin")]
     [EnableRateLimiting("login")]
     public IActionResult LocalAdmin([FromBody] LoginRequest request)
@@ -153,7 +91,7 @@ public class AuthController : ControllerBase
 
         _throttle.RecordSuccess(throttleId);
         _logger.LogWarning("Local admin signed in from {ip}.", ClientAddress.Of(HttpContext));
-        return Ok(new { token = IssueToken("Local admin", GatewayAuth.RoleAdmin, "local-admin", GatewayAuth.LoginLocalAdmin) });
+        return Ok(new { token = IssueToken("Local admin", GatewayAuth.RoleAdmin, "local-admin") });
     }
 
     /// <summary>429 while this login name is locked after too many failures; null otherwise.</summary>
@@ -169,7 +107,7 @@ public class AuthController : ControllerBase
         });
     }
 
-    private string IssueToken(string name, string role, string userId, string login)
+    private string IssueToken(string name, string role, string userId)
     {
         var credentials = new SigningCredentials(_signingKey.SecurityKey, SecurityAlgorithms.HmacSha256);
 
@@ -178,7 +116,7 @@ public class AuthController : ControllerBase
             new Claim(ClaimTypes.Name, name),
             new Claim(ClaimTypes.Role, role),
             new Claim(JwtRegisteredClaimNames.Jti, userId),
-            new Claim(GatewayAuth.LoginClaim, login),
+            new Claim(GatewayAuth.LoginClaim, GatewayAuth.LoginLocalAdmin),
         };
 
         var token = new JwtSecurityToken(

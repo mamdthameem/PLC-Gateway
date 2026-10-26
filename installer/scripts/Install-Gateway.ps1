@@ -4,11 +4,10 @@
 # exits 0 on success, 1 on failure. Secrets arrive in environment variables set by the wizard, never
 # on the command line and never in the log:
 #   SHOTSENSE_INSTALL_CODE       the code from the cloud (Fresh and Restore)
-#   SHOTSENSE_ADMIN_USERNAME     first dashboard login (Fresh)
-#   SHOTSENSE_ADMIN_PASSWORD
+#   SHOTSENSE_ADMIN_PASSWORD     the emergency local admin's password (Fresh and Restore)
 #
 # Modes (the wizard decides):
-#   Fresh    nothing installed before. Bundled PostgreSQL, database, settings, admin login,
+#   Fresh    nothing installed before. Bundled PostgreSQL, database, settings, local admin,
 #            services, firewall rule, tunnel.
 #   Restore  ProgramData\ShotSense survives from an earlier install that was uninstalled. Keeps the
 #            database and its data, rewrites settings from the new code, re-creates the services.
@@ -368,22 +367,15 @@ function Invoke-FreshOrRestore {
     try { Invoke-Gateway -Arguments @('--init-database') | Out-Null }
     finally { $env:SHOTSENSE_PG_SUPERUSER_PASSWORD = $null }
 
-    if ($Mode -eq 'Fresh') {
-        # Both must be present: without them --create-admin would wait for typing on a hidden window.
-        if ([string]::IsNullOrWhiteSpace($env:SHOTSENSE_ADMIN_USERNAME) -or [string]::IsNullOrEmpty($env:SHOTSENSE_ADMIN_PASSWORD)) {
-            throw 'No dashboard username and password were given to setup.'
-        }
-        Write-Log "Creating the dashboard login '$($env:SHOTSENSE_ADMIN_USERNAME)'."
-        $created = Invoke-Gateway -Arguments @('--create-admin') -SuccessCodes @(0, 3)
-        if ($created -eq 3) {
-            # A re-run after a failed install: the login was made last time. Give it the password
-            # typed this time, so the account always ends up with what was entered most recently.
-            Write-Log 'That login already exists from an earlier attempt; setting the password just entered.'
-            Invoke-Gateway -Arguments @('--set-password', '--username', $env:SHOTSENSE_ADMIN_USERNAME) | Out-Null
-        }
-    } else {
-        Write-Log 'Restore: keeping the dashboard logins already in the database.'
+    # The emergency local admin (plant network only). Everyday logins are per-person email accounts
+    # made in the cloud, so this is the only password setup asks for. Written after Write-Settings,
+    # which rewrites the settings file; the gateway stores only its hash.
+    # Without the password --set-local-admin would wait for typing on a hidden window.
+    if ([string]::IsNullOrEmpty($env:SHOTSENSE_ADMIN_PASSWORD)) {
+        throw 'No local admin password was given to setup.'
     }
+    Write-Log 'Setting the emergency local admin password (user name localadmin).'
+    Invoke-Gateway -Arguments @('--set-local-admin') | Out-Null
 
     Assert-SiteProfile -Url ([string]$code.siteProfileUrl) -LicenseKey ([string]$code.licenseKey)
     Register-GatewayService
@@ -392,8 +384,8 @@ function Invoke-FreshOrRestore {
     Install-Tunnel $code
     Write-Summary $code
 
-    # Marks a COMPLETED install. The wizard offers "Restore" (keep data, skip the login page) only when
-    # this exists; after a failed first attempt it runs as Fresh again and finishes the job.
+    # Marks a COMPLETED install. The wizard offers "Restore" (keep the data) only when this exists;
+    # after a failed first attempt it runs as Fresh again and finishes the job.
     [IO.File]::WriteAllText((Join-Path $DataDir 'install-complete.txt'),
         ("Installed {0:yyyy-MM-dd HH:mm} by setup ({1})." -f (Get-Date), $Mode))
 }

@@ -490,3 +490,10 @@ CREATE TABLE IF NOT EXISTS gateway_settings (
 );
 
 INSERT INTO gateway_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+
+-- The PLC's address, when set from the cloud (PUT /api/admin/settings/plc, 2026-10-26). NULL = use
+-- PLC:IpAddress / Rack / Slot from the settings file, which the installer writes. A value here wins.
+ALTER TABLE gateway_settings ADD COLUMN IF NOT EXISTS plc_ip          VARCHAR(45);
+ALTER TABLE gateway_settings ADD COLUMN IF NOT EXISTS plc_rack        SMALLINT;
+ALTER TABLE gateway_settings ADD COLUMN IF NOT EXISTS plc_slot        SMALLINT;
+ALTER TABLE gateway_settings ADD COLUMN IF NOT EXISTS plc_updated_at  TIMESTAMP;

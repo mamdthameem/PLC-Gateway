@@ -6,7 +6,7 @@ Industry project. A single **unified ASP.NET Core (.NET 10) application** hosted
 
 **Stack:** .NET 10, C#, ASP.NET Core (WebApplication + hosted services), S7.NetPlus (PLC driver), Npgsql (PostgreSQL), JWT bearer auth. Frontend: Vite + React + TypeScript (built into `wwwroot`).
 
-**PLC:** Siemens S7-1200 at 192.168.0.180, Rack 0, Slot 1. Data Block DB60. ~443 tags (read as a batched byte region).
+**PLC:** Siemens S7-1200, Rack 0, Slot 1, read as batched byte regions. The address is per site (installer, then the cloud — see "The PLC address is set from the cloud") and so is the tag list (the cloud tag file). The original dev site: 192.168.0.180, DB60, ~443 tags. The tags in this repo's `appsettings.json` are now the IOT [DB600] block at 192.168.1.11 (100 tags, one impeller).
 
 **Database:** `sreesakthi_gateway` on localhost:5432, user=postgres, password=Pass
 
@@ -69,7 +69,7 @@ Industry project. A single **unified ASP.NET Core (.NET 10) application** hosted
 | `gateway_status`               | Backend                             | Single row — PLC connection state (`plc_connected`, `last_scan_at`)    |
 | `gateway_license_state`        | Backend                             | Single row — licence check state. `last_success_utc` (true UTC) + `last_success_url` = the grace anchor; `locked` mirrors the lock |
 | `gateway_settings`             | Backend (dashboard saves via API)   | Single row — `selected_impellers`: which impellers are shown AND counted in energy / spares. See "Impeller selection" |
-| `users`                        | Backend                             | Dashboard login accounts (local; no tenant/subscription)               |
+| `users`                        | Nothing (since 2026-10-26)          | The removed shared login's accounts. Kept, never dropped; nothing reads it |
 
 
 ---
@@ -364,8 +364,8 @@ Thresholds (spare_index 0–13, hours): 100, 300, 300, 600, 2000, 2000, 300, 200
 | `PLCGateway/ImpellerSelection.cs`          | In-memory impeller selection (loaded from `gateway_settings`), read by every impeller-aware service |
 | `PLCGateway/SecretConfig.cs`               | Reads secrets; a `REPLACE_WITH…` placeholder or a too-short key counts as NOT SET. Also `JwtSigningKey` — one signing key shared by `AuthController` and JwtBearer |
 | `PLCGateway/appsettings.Production.json`   | **Git-ignored, never published.** This install's secrets (`Jwt:Key`, `Admin:ApiKey`, `License:*`). Loaded when the app runs as Production |
-| `tools/Set-DashboardPassword.ps1`          | Dev PC only (uses psql): changes a dashboard password, writes the PBKDF2 format. An installed gateway uses `PLCGateway.exe --set-password` |
-| `PLCGateway/Hosting/*.cs`                  | Installed-gateway plumbing: `GatewayPaths` (ProgramData settings/logs), `GatewayCli` (`--init-database`, `--migrate-only`, `--create-admin`, `--set-password`), `DatabaseSetup` (create role+DB, run the embedded `migration.sql`), `FileLoggerProvider` |
+
+| `PLCGateway/Hosting/*.cs`                  | Installed-gateway plumbing: `GatewayPaths` (ProgramData settings/logs), `GatewayCli` (`--init-database`, `--migrate-only`, `--set-local-admin`), `DatabaseSetup` (create role+DB, run the embedded `migration.sql`), `FileLoggerProvider` |
 | `PLCGateway/Api/Services/LoginThrottle.cs` | Per-account sign-in lockout + `ClientAddress` (real visitor IP behind the tunnel) |
 | `PLCGateway/Api/Auth/GatewayAuth.cs`       | Sign-in: scheme selection, Firebase token rules (`FirebaseLogin`, clientId match), gateway-token rules, `NetworkOrigin` (plant network vs tunnel), JSON 401 reasons |
 | `dashboard/src/services/apiClient.ts`      | `apiFetch` — every signed-in API call: fresh token each time, 401/403 ends the session with the gateway's reason |
@@ -385,7 +385,7 @@ Thresholds (spare_index 0–13, hours): 100, 300, 300, 600, 2000, 2000, 300, 200
 | `PLCGateway/PlcService.cs`                 | S7.NetPlus wrapper — `ReadRegion`, reserved `Write`                       |
 | `PLCGateway/CovDetectionService.cs`        | COV logic (relative/absolute deadband, state-change)                     |
 | `PLCGateway/Models/*.cs`                   | `PlcCycle`, `CalculationRequest`, `AggregationState`, `ScanWrites`, …     |
-| `PLCGateway/Api/Controllers/*.cs`          | Dashboard API + `AuthController` (JWT) + `AdminController` (cloud pulls: `live`, `trends`, `filter`, `filter/{id}`, `filter/{id}/amps`, `amps/by-cycle`, `history`; the one cloud write `PUT settings/impellers`) + `FilterController` (`GET /api/filter/{id}` reopens a saved request) + `TrendsController` (local dashboard's graph series, JWT-protected) + `SettingsController` (`GET /api/settings/impellers`, read-only) |
+| `PLCGateway/Api/Controllers/*.cs`          | Dashboard API + `AuthController` (JWT) + `AdminController` (cloud pulls: `live`, `trends`, `filter`, `filter/{id}`, `filter/{id}/amps`, `amps/by-cycle`, `history`, `tags` (the cloud's Tag check), `settings/plc`; the two cloud writes `PUT settings/impellers` and `PUT settings/plc`) + `FilterController` (`GET /api/filter/{id}` reopens a saved request) + `TrendsController` (local dashboard's graph series, JWT-protected) + `SettingsController` (`GET /api/settings/impellers`, read-only) |
 | `PLCGateway/Api/Services/*.cs`             | API data services (typed reads), `TrendsService` (all graph math, `bucket=auto`, gap-fill), `UserService`, `LicenseState` |
 | `dashboard/src/utils/trendBuckets.ts`      | Axis + tooltip label formatting per bucket (selection moved server-side)  |
 | `dashboard/src/utils/chartAxis.ts`         | Shared axis construction — strided ticks, rounded y-domains, axis titles  |
@@ -542,6 +542,15 @@ the cloud client page's Impeller Current header → `gatewayProxy` view `set-imp
 reverses the 2026-09-15 "any signed-in user may change it" decision — a change from one phone was
 showing on every screen, which is what the site took for a shared filter.
 
+**Only impellers the tag file has (2026-10-26).** `ImpellerSelection` reads the tag names at startup:
+any `Current_imp_N`, `Spares_Runhour_impN[..]`, `Spares trigger impN[..]` or `REPLACED_N[..]` tag means
+the site has impeller N (`Available()`). Every reader gets `Snapshot()` = the saved choice limited to the
+available impellers, or all of them when that leaves nothing — so a one-impeller machine (the DB600 block)
+shows and counts impeller 1 only, with no step in the cloud, and the default `{1..10}` row needs no change.
+`PUT /api/admin/settings/impellers` refuses an impeller with no tags (400, naming the ones it has).
+`/live` and `GET /api/settings/impellers` return `available`; the cloud offers only those buttons, and none
+at all for a single impeller. Energy is unaffected: an impeller with no current tag contributed 0 anyway.
+
 | Reader | Effect |
 | ------ | ------ |
 | `DatabaseService.InsertCycleAsync` | per-cycle `energy_kwh` sums only the selected impellers (`EnergyKwhExpr`, `unnest(@impellers)`) |
@@ -583,6 +592,30 @@ back to left.**
 
 ---
 
+## The PLC address is set from the cloud (2026-10-26)
+
+The installer's PLC IP / rack / slot is only the starting value (`PLC:*` in the install's settings file).
+Cloud client page → **PLC** → `gatewayProxy` view `set-plc` → `PUT /api/admin/settings/plc`
+`{ ipAddress, rack, slot }`:
+
+- Saved in `gateway_settings.plc_ip / plc_rack / plc_slot` (NULL = use the settings file); a saved value
+  wins from then on, including at startup (Program.cs loads it before the scan loop starts).
+- Applied without a restart: `PlcService.RequestEndpoint` hands the address over, and `GatewayWorker`
+  switches between passes (`ApplyPendingEndpoint`), never mid-read and never from the HTTP thread. The PUT
+  waits up to ~10 s and answers `applied` + `connected`.
+- **Plant-network IPv4 only** (10/8, 172.16/12, 192.168/16) and rack 0–7 / slot 0–31 (`PlcEndpoint.Problem`):
+  an address set remotely must never point the gateway at the internet.
+- Works while the PLC is unreachable — the cloud reaches the gateway through the tunnel, not the PLC.
+- `GET /api/admin/settings/plc` reads it back with `source` (`installer` / `cloud`) and `connected`.
+
+## Tag check, in the cloud only (2026-10-26)
+
+Cloud client page → **Tag check** → `gatewayProxy` view `tags` → `GET /api/admin/tags`: every tag in the
+site's tag file, in the file's order, with its latest Tier 1 reading (`value` null = never read), the PLC
+address, link state and tag file version. It exists to compare against TIA Portal's online view when a tile
+reads 0 (a wrong address or type shows at once). **Never on the gateway dashboard**: the tag list is private
+to the office, so it is served only behind the admin API key.
+
 ## Running vs Loading vs Stopped
 
 `MachineStatusTile` shows three states, not two:
@@ -619,12 +652,10 @@ Cloudflare quick tunnel — `DEPLOYMENT-NOTES.md` section 11).
     15 minutes (`LoginThrottle`, in memory). Behind the tunnel every request comes from 127.0.0.1, so
     the IP is Cloudflare's `CF-Connecting-IP` — **trusted only on a loopback connection**, because
     port 5200 can be open to the plant LAN, where anyone could send a made-up header.
-  - These rules are for the **old shared login**, now being replaced by per-person email accounts —
-    see "Dashboard sign-in" below.
+  - These rules were written for the shared login, **removed 2026-10-26**; today they guard only the
+    emergency local admin. See "Dashboard sign-in" below.
   - **No default login.** The `Seed` block and the hard-coded `sreesakthi`/`sreesakthi` fallback are
-    gone. The first login is made with `PLCGateway.exe --create-admin` (the installer does this with
-    the username and password typed into it); passwords are set with `--set-password`. Minimum
-    12 characters wherever a password is set.
+    gone. Minimum 12 characters wherever a password is set.
 - **Licence rules (settled 2026-09-18)**: 2xx = valid; 401/402/403 = lock at once; anything else =
   "unreachable", open until 72 h after the last 2xx; empty `CheckUrl` = check off, dashboard open,
   and it never moves the grace clock. The grace anchor is stored with its URL (`last_success_url`),
@@ -640,26 +671,41 @@ Cloudflare quick tunnel — `DEPLOYMENT-NOTES.md` section 11).
 
 ---
 
-## Dashboard sign-in: email accounts, shared login, local admin (2026-10-13)
+## Dashboard sign-in: email accounts, office staff, local admin (2026-10-13, 2026-10-26)
 
 Three ways in, one `[Authorize]`. The default scheme `Gateway` (`Api/Auth/GatewayAuth.cs`) reads each
 bearer token's issuer to pick the check; controllers need nothing else. `/api/admin/*` is untouched —
 the cloud keeps its `X-Api-Key`.
 
+**The shared username/password login was REMOVED on 2026-10-26** (decided with the client's team: while
+it existed, people used the one shared account instead of their own email login). `POST /api/auth/login`
+is gone, every token it ever issued is refused ("The shared login has been removed…"), the login page
+has no link to it, the installer no longer creates it, and `--create-admin` / `--set-password` /
+`tools/Set-DashboardPassword.ps1` went with it. The `users` table is kept (never dropped) but nothing
+reads it. **Upgrading a site that still uses the shared login locks those people out until they have
+email accounts** — add them on the cloud's Users page first.
+
 | Login | Who | Token | Rules |
 | --- | --- | --- | --- |
 | **Email** (normal) | One Firebase account per person, created and managed by any cloud admin on the cloud's Users page | Firebase ID token, checked here against `https://securetoken.google.com/<Firebase:ProjectId>`, audience = project id (Google's keys, cached — no cloud call per request) | `clientId` claim must equal this gateway's `Firebase:ClientId` (empty ⇒ the `clientId` in `License:CheckUrl`); `role` claim `admin`/`viewer`. The dashboard calls `getIdToken()` before **every** API call (`services/apiClient.ts`). A disabled account stops within an hour (ID-token lifetime; the cloud also revokes refresh tokens) |
-| **Shared** (old) | The `users` table username/password | Gateway-signed (`Jwt:Key`), claim `login=password` | `Auth:LegacyLoginEnabled` (default true). Set false once email sign-in is tested: `/api/auth/login` then refuses **and every token it already issued is refused** — read per request, no restart needed |
-| **Local admin** (emergency) | One account: `Auth:LocalAdmin:Username` (default `localadmin`) + `Auth:LocalAdmin:PasswordHash`, made with `PLCGateway.exe --hash-password`, kept in `appsettings.Production.json` | Gateway-signed, claim `login=local-admin`, role admin | **Plant network only.** `NetworkOrigin`: any Cloudflare header (`CF-Connecting-IP`, `CF-Ray`, `CDN-Loop`, `CF-Visitor`) ⇒ came through the tunnel ⇒ refused; otherwise the connection must be loopback or a private address. From the tunnel `/api/auth/local-admin` answers 404 and `/api/auth/config` says `localAdmin: false`; a token obtained on the LAN is refused through the tunnel too |
+| **Office staff** | ShotSense cloud admins (an `admins/{uid}` document), with their own cloud email | Firebase ID token carrying `cloudAdmin: true` | Accepted on **every** gateway as admin, whatever its client id; the top bar says "ShotSense". The claim is set by the cloud: `syncCloudAdminClaim` (Firestore trigger on `admins/{uid}`: set on create, removed + sessions revoked on delete) and `syncAdminClaims` (called by the cloud website when a signed-in admin's token lacks it — backfills admins made earlier) |
+| **Local admin** (emergency) | One account: `Auth:LocalAdmin:Username` (default `localadmin`) + `Auth:LocalAdmin:PasswordHash`. The **installer asks for the password** (its only password page) and writes the hash with `PLCGateway.exe --set-local-admin`; support can run the same command later (as administrator) and restart the service | Gateway-signed, claim `login=local-admin`, role admin | **Plant network only.** `NetworkOrigin`: any Cloudflare header (`CF-Connecting-IP`, `CF-Ray`, `CDN-Loop`, `CF-Visitor`) ⇒ came through the tunnel ⇒ refused; otherwise the connection must be loopback or a private address. From the tunnel `/api/auth/local-admin` answers 404 and `/api/auth/config` says `localAdmin: false`; a token obtained on the LAN is refused through the tunnel too |
 
 - `GET /api/auth/config` (anonymous): the public Firebase web identifiers (`Firebase:ProjectId/ApiKey/AuthDomain/AppId`
   — public by design, same for every gateway, in `appsettings.json`), and which logins to offer.
-- `GET /api/auth/me`: name, email, role, login kind. The dashboard asks right after every sign-in, so a person
-  from another client is refused at once with the gateway's own sentence (`GatewayAuth.WriteChallengeAsync`
-  answers 401 `{message}`; the login page shows it). Any 401/403 on any call ends the session the same way.
-- Roles: the old `users` role `user` reads as `viewer`. **Nothing on the gateway is admin-only today** — impeller
-  selection, the only setting, moved to the cloud. The role is shown in the top bar.
-- The startup log says which of the three logins are on, and the email client id with where it came from.
+- `GET /api/auth/me`: name, email, role, login kind (`firebase` / `office` / `local-admin`). The dashboard asks
+  right after every sign-in, so a person from another client is refused at once with the gateway's own sentence
+  (`GatewayAuth.WriteChallengeAsync` answers 401 `{message}`; the login page shows it): "This email has not been
+  added for this site. Ask ShotSense to add it…". Any 401/403 on any call ends the session the same way.
+- **"Forgot password?" works for any account in the Firebase project**, so receiving the reset email does not
+  mean the email belongs to this site. That is how the 2026-10-26 report happened: a cloud admin's email was
+  tried on a site before office staff were accepted everywhere. A client's people must be added on the cloud's
+  Users page for that client (Firebase allows one account per email, so an office email cannot also be a
+  client user — and no longer needs to be).
+- **Nothing on the gateway is admin-only today** — impeller selection and the PLC address, the only settings,
+  are set from the cloud. The role is shown in the top bar.
+- The startup log says whether email sign-in and the local admin are on, and the email client id with where it
+  came from.
 
 ## The client's tag file comes from the cloud (2026-10-13)
 
@@ -782,6 +828,6 @@ Safe to re-run on existing databases — all statements are idempotent (typed-co
 
 ## How to run / deploy
 
-- **Local:** `cd PLCGateway; dotnet run --no-launch-profile -- --urls http://localhost:5200` (serves API + dashboard). Put `--urls` FIRST: a bare flag before it swallows the next value. `--rebuild-aggregation` resets Section 1 incremental state and replays history. A fresh database has no login: `dotnet run --project PLCGateway -- --create-admin`.
+- **Local:** `cd PLCGateway; dotnet run --no-launch-profile -- --urls http://localhost:5200` (serves API + dashboard). Put `--urls` FIRST: a bare flag before it swallows the next value. `--rebuild-aggregation` resets Section 1 incremental state and replays history. Sign in with an email account from the cloud, or set a local admin: `dotnet run --project PLCGateway -- --set-local-admin` (prints the hash for `appsettings.Production.json` on a dev PC).
 - **Client PCs: the installer** (`installer/README.md`). Windows services instead of IIS, a private bundled PostgreSQL, settings in `C:\ProgramData\ShotSense`, the Cloudflare tunnel instead of a certificate and port forward. See "Installed gateway" above.
 - **IIS** (`DEPLOYMENT-NOTES.md`) still works but is no longer the client path. App pool must be AlwaysRunning / Idle 0 / Preload so the PLC scan loop is never idled.

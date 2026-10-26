@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Npgsql;
+using PlcApi.Hosting;
 using PlcApi.Models;
 using PlcApi.Services;
 
@@ -27,6 +28,9 @@ public class AdminController : ControllerBase
     private readonly DatabaseService _db;
     private readonly CalculationService _calculation;
     private readonly ImpellerSelection _impellers;
+    private readonly IConfiguration _config;
+    private readonly PlcService _plc;
+    private readonly SiteProfileState _siteProfile;
 
     public AdminController(
         IConfiguration config,
@@ -40,8 +44,13 @@ public class AdminController : ControllerBase
         ITrendsService trends,
         DatabaseService db,
         CalculationService calculation,
-        ImpellerSelection impellers)
+        ImpellerSelection impellers,
+        PlcService plc,
+        SiteProfileState siteProfile)
     {
+        _config = config;
+        _plc = plc;
+        _siteProfile = siteProfile;
         _connectionString = config.GetConnectionString("PostgresDb")
             ?? config.GetValue<string>("PostgreSQL:ConnectionString")
             ?? throw new InvalidOperationException("Connection string is required.");
@@ -213,8 +222,9 @@ public class AdminController : ControllerBase
                     blastCount             = s.BlastCount
                 }),
                 // The site's impeller selection (gateway_settings): amps, spareGrid and spareAlerts
-                // hold only these impellers, and every energy figure counts only these.
-                impellers = new { selected = _impellers.Snapshot() },
+                // hold only these impellers, and every energy figure counts only these. available =
+                // the impellers the tag file has tags for, the only ones the cloud may offer.
+                impellers = new { selected = _impellers.Snapshot(), available = _impellers.Available() },
                 amps = amps.Select(a => new
                 {
                     parameterName = a.ParameterName,
@@ -533,12 +543,22 @@ public class AdminController : ControllerBase
             return BadRequest(new { error = ex.Message });
         }
 
+        // Only impellers the tag file has: a machine with one impeller has nothing to show for 2–10.
+        var missing = selected.Except(_impellers.Available()).ToArray();
+        if (missing.Length > 0)
+            return BadRequest(new
+            {
+                error = $"This site's tag file has no tags for impeller {string.Join(", ", missing)}. " +
+                        $"It has: {(_impellers.Available() is { Length: > 0 } a ? string.Join(", ", a) : "none")}."
+            });
+
         try
         {
             await _calculation.ApplyImpellerSelectionAsync(selected, "cloud");
             return Ok(new ImpellerSelectionDto
             {
                 Selected     = _impellers.Snapshot(),
+                Available    = _impellers.Available(),
                 MaxImpellers = ImpellerSelection.MaxImpellers
             });
         }
@@ -548,4 +568,127 @@ public class AdminController : ControllerBase
             return StatusCode(500, new { error = "Failed to save the impeller selection" });
         }
     }
+
+    // GET /api/admin/tags — the cloud's Tag check page (office only, 2026-10-26): every tag in this
+    // site's tag file, in the file's order, with its latest reading. value = null means the gateway
+    // has never stored a reading for that address (a write-only tag, or one outside what the PLC
+    // returns). Served only behind the admin API key: the tag list is private to the office.
+    [HttpGet("tags")]
+    public async Task<IActionResult> Tags()
+    {
+        try
+        {
+            var readings = await _db.GetCurrentValuesByAddressAsync();
+            var (plcConnected, lastScan) = await ReadPlcLinkAsync();
+            var tags = _config.GetSection("Tags").GetChildren().Select(t =>
+            {
+                string address = t["Address"] ?? "";
+                bool read = readings.TryGetValue(address, out var r);
+                return new
+                {
+                    name        = t["Name"] ?? "",
+                    address,
+                    dataType    = t["DataType"] ?? "",
+                    mode        = t["Mode"] ?? "",
+                    value       = read ? r.Value : null,
+                    lastUpdated = read ? ToUtc(r.LastUpdated) : null,
+                    isStale     = read && r.IsStale,
+                };
+            }).ToList();
+
+            return Ok(new
+            {
+                generatedAtUtc = DateTime.UtcNow,
+                plcConnected,
+                lastScanAt = ToUtc(lastScan),
+                plc = PlcView(_plc.Endpoint),
+                tagFileVersion = _siteProfile.Version,
+                tags,
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "admin/tags failed");
+            return StatusCode(500, new { error = "tag check failed" });
+        }
+    }
+
+    // GET /api/admin/settings/plc — where the gateway reads the PLC, where that address came from, and
+    // whether the PLC answers there.
+    [HttpGet("settings/plc")]
+    public async Task<IActionResult> GetPlcSettings()
+    {
+        try
+        {
+            var saved = await _db.GetSavedPlcEndpointAsync();
+            var (plcConnected, lastScan) = await ReadPlcLinkAsync();
+            return Ok(new
+            {
+                plc = PlcView(_plc.Endpoint),
+                source = saved is null ? "installer" : "cloud",
+                connected = _plc.IsConnected && plcConnected,
+                lastScanAt = ToUtc(lastScan),
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "admin/settings/plc read failed");
+            return StatusCode(500, new { error = "Failed to read the PLC settings" });
+        }
+    }
+
+    // PUT /api/admin/settings/plc — sets the PLC's address from the cloud (2026-10-26). Saved in
+    // gateway_settings, where it wins over the settings file from then on, and switched to at once:
+    // the scan loop picks it up before its next read. Waits up to ~10 s to say whether the PLC
+    // answered there. Body: { "ipAddress": "192.168.1.11", "rack": 0, "slot": 1 }.
+    [HttpPut("settings/plc")]
+    public async Task<IActionResult> SavePlcSettings([FromBody] PlcSettingsRequest request)
+    {
+        if (PlcEndpoint.Problem(request.IpAddress, request.Rack, request.Slot) is { } problem)
+            return BadRequest(new { error = problem });
+
+        var endpoint = new PlcEndpoint(request.IpAddress!.Trim(), (short)request.Rack, (short)request.Slot);
+        try
+        {
+            await _db.SavePlcEndpointAsync(endpoint, "cloud");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "admin/settings/plc save failed");
+            return StatusCode(500, new { error = "Failed to save the PLC address" });
+        }
+        _plc.RequestEndpoint(endpoint);
+
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (DateTime.UtcNow < deadline && !(_plc.Endpoint == endpoint && _plc.IsConnected))
+            await Task.Delay(500, HttpContext.RequestAborted);
+
+        return Ok(new
+        {
+            plc = PlcView(endpoint),
+            source = "cloud",
+            applied = _plc.Endpoint == endpoint,
+            connected = _plc.Endpoint == endpoint && _plc.IsConnected,
+        });
+    }
+
+    private static object PlcView(PlcEndpoint e) => new { ipAddress = e.IpAddress, rack = e.Rack, slot = e.Slot };
+
+    private async Task<(bool Connected, DateTime? LastScan)> ReadPlcLinkAsync()
+    {
+        await using var conn = new NpgsqlConnection(_connectionString);
+        await conn.OpenAsync();
+        await using var cmd = new NpgsqlCommand("SELECT plc_connected, last_scan_at FROM gateway_status WHERE id = 1", conn);
+        await using var r = await cmd.ExecuteReaderAsync();
+        return await r.ReadAsync()
+            ? (r.GetBoolean(0), r.IsDBNull(1) ? null : r.GetDateTime(1))
+            : (false, null);
+    }
+}
+
+public class PlcSettingsRequest
+{
+    public string? IpAddress { get; set; }
+    public int Rack { get; set; }
+    public int Slot { get; set; } = 1;
 }

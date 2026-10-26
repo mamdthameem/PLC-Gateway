@@ -1311,6 +1311,62 @@ public class DatabaseService
             : null;
     }
 
+    // The PLC address saved from the cloud, or null when none was (the settings file's PLC:* applies).
+    // Startup only, so not routed through RetryAsync — same reasoning as GetImpellerSelectionAsync.
+    public async Task<PlcEndpoint?> GetSavedPlcEndpointAsync()
+    {
+        await using var conn = new NpgsqlConnection(_connectionString);
+        await conn.OpenAsync();
+        await using var cmd = new NpgsqlCommand(
+            "SELECT plc_ip, plc_rack, plc_slot FROM gateway_settings WHERE id = 1 AND plc_ip IS NOT NULL", conn);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        if (!await reader.ReadAsync()) return null;
+        return new PlcEndpoint(reader.GetString(0),
+            reader.IsDBNull(1) ? (short)0 : reader.GetInt16(1),
+            reader.IsDBNull(2) ? (short)1 : reader.GetInt16(2));
+    }
+
+    // Not routed through RetryAsync: the cloud must be told when a save did not happen.
+    public async Task SavePlcEndpointAsync(PlcEndpoint endpoint, string? updatedBy)
+    {
+        await using var conn = new NpgsqlConnection(_connectionString);
+        await conn.OpenAsync();
+        await using var cmd = new NpgsqlCommand(
+            @"INSERT INTO gateway_settings (id, plc_ip, plc_rack, plc_slot, plc_updated_at, updated_at, updated_by)
+              VALUES (1, @ip, @rack, @slot, NOW(), NOW(), @updated_by)
+              ON CONFLICT (id) DO UPDATE SET
+                  plc_ip = EXCLUDED.plc_ip, plc_rack = EXCLUDED.plc_rack, plc_slot = EXCLUDED.plc_slot,
+                  plc_updated_at = EXCLUDED.plc_updated_at,
+                  updated_at = EXCLUDED.updated_at, updated_by = EXCLUDED.updated_by", conn);
+        cmd.Parameters.AddWithValue("ip", endpoint.IpAddress);
+        cmd.Parameters.AddWithValue("rack", endpoint.Rack);
+        cmd.Parameters.AddWithValue("slot", endpoint.Slot);
+        cmd.Parameters.AddWithValue("updated_by", (object?)updatedBy ?? DBNull.Value);
+        await cmd.ExecuteNonQueryAsync();
+        _logger.LogInformation("PLC address saved ({plc}) by {user}.", endpoint, updatedBy ?? "unknown");
+    }
+
+    // Every configured tag's latest reading (Tier 1), for the cloud's Tag check page. Keyed by address,
+    // as plc_current_values is; the caller pairs the rows with the tag file's own list.
+    public async Task<Dictionary<string, (string? Value, DateTime? LastUpdated, bool IsStale)>> GetCurrentValuesByAddressAsync()
+    {
+        var result = new Dictionary<string, (string?, DateTime?, bool)>(StringComparer.OrdinalIgnoreCase);
+        await using var conn = new NpgsqlConnection(_connectionString);
+        await conn.OpenAsync();
+        await using var cmd = new NpgsqlCommand(
+            $@"SELECT cv.address, {SqlExpressions.TypedValue("cv")}, cv.last_updated, COALESCE(cv.is_stale, FALSE)
+               FROM plc_current_values cv", conn);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            result[reader.GetString(0)] = (
+                reader.IsDBNull(1) ? null : reader.GetValue(1)?.ToString(),
+                reader.IsDBNull(2) ? null : reader.GetDateTime(2),
+                reader.GetBoolean(3));
+        }
+        return result;
+    }
+
     // Saves a new impeller selection and brings every stored energy figure into line with it, in
     // ONE transaction, so no reader ever sees recalculated cycles beside an old total:
     //   1. gateway_settings.selected_impellers

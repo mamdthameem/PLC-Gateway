@@ -3,8 +3,8 @@
 // arrives as "viewer".
 export type UserRole = 'admin' | 'viewer';
 
-/** How they signed in: their own email, the old shared login, or the emergency local admin. */
-export type LoginKind = 'firebase' | 'password' | 'local-admin';
+/** How they signed in: their own email, a ShotSense office email (admin on every site), or the emergency local admin. */
+export type LoginKind = 'firebase' | 'office' | 'local-admin';
 
 export interface User {
   id: string;

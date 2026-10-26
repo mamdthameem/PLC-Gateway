@@ -171,12 +171,15 @@ begin
   PlcPage.Values[1] := '0';
   PlcPage.Values[2] := '1';
 
+  { Everyday logins are per-person email accounts, added on the cloud's Users page. This page sets only
+    the emergency local admin: for when the site's internet is down, plant network only, user name
+    localadmin. The password stays in the office; the client does not need it. }
   AdminPage := CreateInputQueryPage(PlcPage.ID,
-    'Dashboard login',
-    'The account for signing in to the dashboard.',
-    'Choose the username and password the plant will use. ' +
-    'The password needs at least 12 characters. It can be changed later.');
-  AdminPage.Add('Username:', False);
+    'Emergency local admin',
+    'A password for signing in when the internet at the site is down.',
+    'Everyone signs in to the dashboard with their own email, added on the cloud''s Users page. ' +
+    'This password is only for emergencies: it works on the plant network only, with the user name ' +
+    'localadmin. Keep it in the office. At least 12 characters.');
   AdminPage.Add('Password:', True);
   AdminPage.Add('Type the password again:', True);
 
@@ -200,10 +203,7 @@ begin
   Result := False;
   if InstallMode = 'Upgrade' then
     Result := (PageID = CodePage.ID) or (PageID = PlcPage.ID) or
-              (PageID = AdminPage.ID) or (PageID = NetworkPage.ID)
-  else if InstallMode = 'Restore' then
-    { The logins are already in the kept database. }
-    Result := (PageID = AdminPage.ID);
+              (PageID = AdminPage.ID) or (PageID = NetworkPage.ID);
 end;
 
 { ---- Validation ---------------------------------------------------------------------------- }
@@ -281,25 +281,6 @@ begin
   Result := (Count = 4);
 end;
 
-function IsValidUsername(S: String): Boolean;
-var
-  I: Integer;
-  C: Char;
-begin
-  Result := (Length(S) >= 3) and (Length(S) <= 64);
-  if not Result then Exit;
-  for I := 1 to Length(S) do
-  begin
-    C := S[I];
-    if not (((C >= 'a') and (C <= 'z')) or ((C >= 'A') and (C <= 'Z')) or
-            ((C >= '0') and (C <= '9')) or (C = '.') or (C = '_') or (C = '@') or (C = '-')) then
-    begin
-      Result := False;
-      Exit;
-    end;
-  end;
-end;
-
 function NextButtonClick(CurPageID: Integer): Boolean;
 var
   Rack, Slot: Integer;
@@ -340,17 +321,12 @@ begin
 
   else if CurPageID = AdminPage.ID then
   begin
-    if not IsValidUsername(Trim(AdminPage.Values[0])) then
-    begin
-      MsgBox('A username is 3 to 64 characters: letters, digits and . _ @ - only.', mbError, MB_OK);
-      Result := False;
-    end
-    else if Length(AdminPage.Values[1]) < 12 then
+    if Length(AdminPage.Values[0]) < 12 then
     begin
       MsgBox('The password needs at least 12 characters.', mbError, MB_OK);
       Result := False;
     end
-    else if AdminPage.Values[1] <> AdminPage.Values[2] then
+    else if AdminPage.Values[0] <> AdminPage.Values[1] then
     begin
       MsgBox('The two passwords are different. Type them again.', mbError, MB_OK);
       Result := False;
@@ -403,13 +379,11 @@ begin
       ' -PlcSlot ' + Trim(PlcPage.Values[2]);
 
   SetEnvironmentVariable('SHOTSENSE_INSTALL_CODE', InstallCodeText);
-  SetEnvironmentVariable('SHOTSENSE_ADMIN_USERNAME', Trim(AdminPage.Values[0]));
-  SetEnvironmentVariable('SHOTSENSE_ADMIN_PASSWORD', AdminPage.Values[1]);
+  SetEnvironmentVariable('SHOTSENSE_ADMIN_PASSWORD', AdminPage.Values[0]);
   try
     Started := Exec(PowerShellExe, Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   finally
     SetEnvironmentVariable('SHOTSENSE_INSTALL_CODE', '');
-    SetEnvironmentVariable('SHOTSENSE_ADMIN_USERNAME', '');
     SetEnvironmentVariable('SHOTSENSE_ADMIN_PASSWORD', '');
   end;
 

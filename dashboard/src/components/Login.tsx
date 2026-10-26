@@ -49,15 +49,14 @@ const inputSx = {
 };
 
 /**
- * Which form is showing. "email" is the normal sign-in (one account per person); "shared" is the old
- * username/password, offered only while the gateway still has it on; "local" is the emergency admin,
- * reached by a deliberately quiet link that appears only on the plant network.
+ * Which form is showing. "email" is the sign-in (one account per person, added on the cloud's Users
+ * page); "local" is the emergency admin, reached by a deliberately quiet link that appears only on the
+ * plant network. The shared username/password login was removed (2026-10-26).
  */
-type Mode = 'email' | 'shared' | 'local';
+type Mode = 'email' | 'local';
 
 const MODE_TEXT: Record<Mode, { subtitle: string; idLabel: string; idType: string; idAutocomplete: string }> = {
   email:  { subtitle: 'Sign in with your email to access your machine dashboard', idLabel: 'Email',    idType: 'email', idAutocomplete: 'username' },
-  shared: { subtitle: 'Sign in with the shared username and password',            idLabel: 'Username', idType: 'text',  idAutocomplete: 'username' },
   local:  { subtitle: 'Local admin: for when the internet is down. Plant network only', idLabel: 'Username', idType: 'text', idAutocomplete: 'off' },
 };
 
@@ -76,7 +75,7 @@ export const Login: React.FC = () => {
   const [loading, setLoading]         = useState(false);
   const [chosenMode, setChosenMode]   = useState<Mode | null>(null);
   const {
-    options, optionsError, sessionMessage, loginWithEmail, loginShared, loginLocalAdmin, sendPasswordReset,
+    options, optionsError, sessionMessage, loginWithEmail, loginLocalAdmin, sendPasswordReset,
   } = useAuth();
   const navigate   = useNavigate();
   const location   = useLocation();
@@ -85,8 +84,7 @@ export const Login: React.FC = () => {
   const from = (location.state as { from?: unknown } | null)?.from;
   const returnTo = typeof from === 'string' && from.startsWith('/') && !from.startsWith('//') ? from : '/dashboard';
 
-  // Email sign-in when the gateway offers it; otherwise the shared login while it is still on.
-  const mode: Mode = chosenMode ?? (options?.emailLogin || !options?.legacyLogin ? 'email' : 'shared');
+  const mode: Mode = chosenMode ?? 'email';
   const text = MODE_TEXT[mode];
   const shownError = error ?? optionsError ?? sessionMessage;
 
@@ -104,7 +102,7 @@ export const Login: React.FC = () => {
     setInfo(null);
     setLoading(true);
     try {
-      const signIn = mode === 'email' ? loginWithEmail : mode === 'shared' ? loginShared : loginLocalAdmin;
+      const signIn = mode === 'email' ? loginWithEmail : loginLocalAdmin;
       const result = await signIn(username, password);
       if (result.success) {
         navigate(returnTo, { replace: true });
@@ -537,9 +535,8 @@ export const Login: React.FC = () => {
             </Button>
           </Box>
 
-          {/* Other ways in. "Forgot password?" is for email accounts only. The shared login is
-              offered while the gateway still has it on. "Local admin login" is deliberately quiet,
-              and the gateway only offers it to a browser on the plant network. */}
+          {/* "Forgot password?" is for email accounts only. "Local admin login" is deliberately
+              quiet, and the gateway only offers it to a browser on the plant network. */}
           <Box sx={{ mt: 2.5, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1.25 }}>
             {mode === 'email' && options?.firebase && (
               <Box component="button" type="button" onClick={handleForgot} sx={quietLinkSx}>
@@ -549,11 +546,6 @@ export const Login: React.FC = () => {
             {mode !== 'email' && options?.emailLogin && (
               <Box component="button" type="button" onClick={() => switchMode('email')} sx={quietLinkSx}>
                 Sign in with your email instead
-              </Box>
-            )}
-            {mode !== 'shared' && options?.legacyLogin && (
-              <Box component="button" type="button" onClick={() => switchMode('shared')} sx={quietLinkSx}>
-                Use the shared username and password
               </Box>
             )}
             {mode !== 'local' && options?.localAdmin && (

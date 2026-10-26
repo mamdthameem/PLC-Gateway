@@ -92,6 +92,19 @@ export default function AmpsPanel() {
 
   const cols = readings.length;
 
+  // No current reading for any impeller in use: the site's tag file has no Current_imp_N tag (a PLC
+  // that does not measure impeller current yet). Say so instead of leaving an empty heading.
+  if (cols === 0) {
+    return (
+      <Box>
+        <Typography variant="h6" sx={{ mb: 1 }}>Impeller Current</Typography>
+        <Alert severity="info" sx={{ py: 0.25 }}>
+          No impeller current readings for this machine yet. Energy figures need them.
+        </Alert>
+      </Box>
+    );
+  }
+
   return (
     <Box>
       {/* Only the selected impellers have tiles. The selection is machine-wide and is chosen from

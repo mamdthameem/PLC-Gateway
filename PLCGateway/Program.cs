@@ -29,8 +29,8 @@ builder.Host.UseWindowsService(o => o.ServiceName = GatewayPaths.ServiceName);
 GatewayPaths.AddInstallSettings(builder.Configuration);
 var config = builder.Configuration;
 
-// One-shot commands (--init-database, --migrate-only, --create-admin, --set-password) run and exit
-// here, before any PLC scanning or web serving is set up. See GatewayCli.
+// One-shot commands (--init-database, --migrate-only, --set-local-admin) run and exit here, before
+// any PLC scanning or web serving is set up. See GatewayCli.
 if (await GatewayCli.TryRunAsync(args, config) is int exitCode)
     return exitCode;
 
@@ -59,7 +59,8 @@ var pgConn  = DatabaseSetup.ConnectionString(config);
 // ── Core PLC pipeline (unchanged services) ───────────────────────────────────
 builder.Services.AddSingleton(new PlcService(plcIp!, plcRack, plcSlot));
 builder.Services.AddSingleton<PlcConnectionState>();
-builder.Services.AddSingleton<ImpellerSelection>();
+// Knows which impellers exist from the tag file's tag names (loaded just above).
+builder.Services.AddSingleton(new ImpellerSelection(config));
 builder.Services.AddSingleton<DatabaseService>(sp =>
     new DatabaseService(pgConn!, sp.GetRequiredService<ILogger<DatabaseService>>(),
                         sp.GetRequiredService<ImpellerSelection>()));
@@ -88,15 +89,14 @@ builder.Services.AddScoped<IMachineStatusService, MachineStatusService>();
 builder.Services.AddScoped<IHistoricalService, HistoricalService>();
 builder.Services.AddScoped<ITrendsService, TrendsService>();
 builder.Services.AddScoped<ICyclesService, CyclesService>();
-builder.Services.AddScoped<IUserService, UserService>();
 
 builder.Services.AddControllers();
 builder.Services.AddMemoryCache();
 
-// Sign-in brute-force defence, in two halves (see AuthController.Login):
-//   per visitor IP — 5 attempts a minute. ClientAddress reads Cloudflare's CF-Connecting-IP behind
-//                    the tunnel, where every request otherwise arrives from 127.0.0.1;
-//   per account    — LoginThrottle: 10 failures lock that login name for 15 minutes.
+// Brute-force defence for the emergency local admin login (AuthController.LocalAdmin), in two halves:
+//   per visitor IP — 5 attempts a minute (rate limiter policy "login");
+//   per account    — LoginThrottle: 10 failures lock the login for 15 minutes.
+// Email sign-in has its own limits at Firebase.
 builder.Services.AddSingleton<LoginThrottle>();
 builder.Services.AddRateLimiter(options =>
 {
@@ -123,7 +123,7 @@ var jwtSigningKey = new JwtSigningKey(
 builder.Services.AddSingleton(jwtSigningKey);
 
 // Dashboard sign-in: Firebase email logins (one per person, managed from the cloud), plus the
-// gateway's own tokens for the old shared login and the emergency local admin. See GatewayAuth.
+// gateway's own token for the emergency local admin. See GatewayAuth.
 var firebaseLogin = FirebaseLogin.FromConfig(config);
 builder.Services.AddSingleton(firebaseLogin);
 var authBuilder = builder.Services.AddAuthentication(GatewayAuth.Scheme)
@@ -143,7 +143,7 @@ var authBuilder = builder.Services.AddAuthentication(GatewayAuth.Scheme)
         };
         options.Events = new JwtBearerEvents
         {
-            OnTokenValidated = ctx => GatewayAuth.ValidateLocalToken(ctx, config),
+            OnTokenValidated = GatewayAuth.ValidateLocalToken,
             OnChallenge      = GatewayAuth.WriteChallengeAsync,
         };
     });
@@ -219,7 +219,6 @@ using (var scope = app.Services.CreateScope())
 {
     var sp     = scope.ServiceProvider;
     var db     = sp.GetRequiredService<DatabaseService>();
-    var users  = sp.GetRequiredService<IUserService>();
     var logger = sp.GetRequiredService<ILogger<Program>>();
 
     // Say it loudly when a secret is missing or still the placeholder. The gateway keeps running
@@ -237,35 +236,38 @@ using (var scope = app.Services.CreateScope())
     else
         logger.LogWarning("Email sign-in: off (Firebase:ProjectId / Firebase:ApiKey not set).");
 
-    bool legacyLogin = GatewayAuth.LegacyLoginEnabled(config);
-    logger.LogInformation("Shared username/password login: {state}.", legacyLogin ? "on" : "off (Auth:LegacyLoginEnabled=false)");
     logger.LogInformation("Local admin login: {state}.",
-        GatewayAuth.LocalAdminHash(config) is null ? "not set up (Auth:LocalAdmin:PasswordHash)" : "set up, plant network only");
-
-    // There is no default login. With email sign-in off, the shared login needs at least one account,
-    // made with PLCGateway.exe --create-admin; a known default password on a gateway reachable from the
-    // internet is the first thing anyone tries.
-    if (legacyLogin && !firebaseLogin.Enabled)
-    {
-        try
-        {
-            if (!await users.AnyUsersAsync())
-                logger.LogWarning("No dashboard login exists yet. Create one with: PLCGateway.exe --create-admin " +
-                                  "(from the source: dotnet run --project PLCGateway -- --create-admin).");
-        }
-        catch (Exception ex) { logger.LogError(ex, "Checking for dashboard logins failed."); }
-    }
+        GatewayAuth.LocalAdminHash(config) is null
+            ? "not set up (PLCGateway.exe --set-local-admin)"
+            : "set up, plant network only");
 
     // Impeller selection (gateway_settings). Loaded before any hosted service starts, so the first
     // cycle closed and the first spare poll already honour it. With no row — or on a database the
-    // migration has not reached yet — every impeller stays selected.
+    // migration has not reached yet — every impeller the tag file has stays selected.
+    var impellers = sp.GetRequiredService<ImpellerSelection>();
     try
     {
         var saved = await db.GetImpellerSelectionAsync();
         if (saved is not null)
-            sp.GetRequiredService<ImpellerSelection>().Set(saved);
+            impellers.Set(saved);
     }
     catch (Exception ex) { logger.LogError(ex, "Loading the impeller selection failed; using every impeller."); }
+    logger.LogInformation("Impellers in the tag file: {available}; in use: {inUse}.",
+        impellers.Available() is { Length: > 0 } available ? string.Join(",", available) : "none",
+        impellers.Snapshot() is { Length: > 0 } inUse ? string.Join(",", inUse) : "none");
+
+    // The PLC address set from the cloud, if any, wins over PLC:* in the settings file. Applied by the
+    // scan loop before its first connection attempt.
+    try
+    {
+        if (await db.GetSavedPlcEndpointAsync() is { } savedPlc)
+        {
+            var plc = sp.GetRequiredService<PlcService>();
+            logger.LogInformation("PLC address set from the cloud: {plc} (the settings file says {file}).", savedPlc, plc.Endpoint);
+            plc.RequestEndpoint(savedPlc);
+        }
+    }
+    catch (Exception ex) { logger.LogError(ex, "Loading the PLC address saved from the cloud failed; using the settings file."); }
 
     // Ops recovery: reset the incremental Section 1 state to replay full history.
     if (args.Contains("--rebuild-aggregation"))

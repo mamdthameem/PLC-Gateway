@@ -13,8 +13,8 @@ import { apiFetch, reasonOf, setSessionEndedHandler, setTokenSource } from '../s
  * - **Email** (the normal way): Firebase Authentication, one account per person, managed from the
  *   cloud. The browser signs in with Firebase; every API call then carries a fresh Firebase ID token
  *   (apiClient asks for one each time), which the gateway checks itself.
- * - **Shared login** (old, being retired): the users-table username/password; the gateway signs the
- *   token. Offered only while the gateway has it switched on.
+ * - **ShotSense office staff** sign in with their own cloud admin email the same way; the gateway
+ *   accepts them on every site as admin.
  * - **Local admin** (emergency, internet down): one account, plant network only; the gateway signs
  *   the token. Offered only when the gateway says this browser is on the plant network.
  *
@@ -26,7 +26,6 @@ import { apiFetch, reasonOf, setSessionEndedHandler, setTokenSource } from '../s
 export interface LoginOptions {
   firebase: { apiKey: string; authDomain: string; projectId: string; appId: string } | null;
   emailLogin: boolean;
-  legacyLogin: boolean;
   localAdmin: boolean;
 }
 
@@ -41,7 +40,6 @@ interface AuthContextType {
   /** Why the last session ended (expired, refused, signed out elsewhere) — shown on the login page. */
   sessionMessage: string | null;
   loginWithEmail: (email: string, password: string) => Promise<Result>;
-  loginShared: (username: string, password: string) => Promise<Result>;
   loginLocalAdmin: (username: string, password: string) => Promise<Result>;
   sendPasswordReset: (email: string) => Promise<Result>;
   logout: () => void;
@@ -50,7 +48,7 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-/** The gateway-signed token (shared login or local admin). Email sign-ins keep nothing here. */
+/** The gateway-signed token (local admin). Email sign-ins keep nothing here. */
 const TOKEN_KEY = 'plc_gateway_token';
 
 let firebaseAuth: Auth | null = null;
@@ -162,7 +160,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       if (!active) return;
       setOptions(opts);
 
-      // A gateway-signed session (shared login or local admin) left in this browser.
+      // A gateway-signed session (local admin) left in this browser.
       if (readStoredToken()) {
         const me = await whoAmI();
         if (!active) return;
@@ -209,7 +207,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return { success: true };
   };
 
-  /** The shared login and the local admin both get a gateway-signed token the same way. */
+  /** The local admin gets a gateway-signed token. */
   const loginWithGateway = async (path: string, username: string, password: string): Promise<Result> => {
     try {
       const res = await fetch(`${API_BASE}${path}`, {
@@ -253,7 +251,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     isLoading,
     sessionMessage,
     loginWithEmail,
-    loginShared: (u, p) => loginWithGateway('/api/auth/login', u, p),
     loginLocalAdmin: (u, p) => loginWithGateway('/api/auth/local-admin', u, p),
     sendPasswordReset,
     logout: () => endSession(null),

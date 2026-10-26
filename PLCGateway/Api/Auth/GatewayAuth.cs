@@ -7,19 +7,22 @@ using Microsoft.IdentityModel.Tokens;
 
 namespace PlcApi.Auth;
 
-// Who may use the dashboard API, and how a request proves it (decided 2026-10-12/13).
+// Who may use the dashboard API, and how a request proves it (decided 2026-10-12/13, 2026-10-26).
 //
 // Every request carries "Authorization: Bearer <token>", and the token is one of two kinds:
 //
 //   Firebase   — a Firebase ID token: one person's own email login, managed from the cloud. Checked
 //                against Google's published keys (issuer https://securetoken.google.com/<projectId>,
-//                audience <projectId>), and accepted only when its clientId claim is THIS gateway's
-//                client. Role "admin" or "viewer" comes from the token.
-//   GatewayToken — a token this gateway signed itself (Jwt:Key). Two logins issue one:
-//                  "password"    the old shared username/password (users table), switched off with
-//                                Auth:LegacyLoginEnabled=false — which also voids tokens it already gave;
-//                  "local-admin" the emergency admin (Auth:LocalAdmin), which works only from the
-//                                plant network, never through the Cloudflare tunnel (NetworkOrigin).
+//                audience <projectId>). Accepted when its clientId claim is THIS gateway's client (role
+//                "admin" or "viewer" from the token), or when it carries cloudAdmin=true — ShotSense
+//                office staff, who may open every site's dashboard as admin.
+//   GatewayToken — a token this gateway signed itself (Jwt:Key), issued only to the emergency local
+//                  admin (Auth:LocalAdmin), which works only from the plant network, never through the
+//                  Cloudflare tunnel (NetworkOrigin).
+//
+// The shared username/password login was REMOVED on 2026-10-26: with it in place, people kept using
+// one shared account instead of their own email login. Its tokens (login=password, or no login claim
+// at all) are refused.
 //
 // The default scheme "Gateway" reads the token's issuer (without trusting it) to pick which of the two
 // checks it, so controllers just say [Authorize]. The cloud's /api/admin/* uses neither: it keeps its
@@ -32,14 +35,12 @@ public static class GatewayAuth
 
     /// <summary>Claim on every signed-in principal saying how the person signed in.</summary>
     public const string LoginClaim      = "login";
-    public const string LoginPassword   = "password";
     public const string LoginFirebase   = "firebase";
+    public const string LoginOffice     = "office";       // a ShotSense cloud admin, by email
     public const string LoginLocalAdmin = "local-admin";
 
     public const string RoleAdmin  = "admin";
     public const string RoleViewer = "viewer";
-
-    public static bool LegacyLoginEnabled(IConfiguration config) => config.GetValue("Auth:LegacyLoginEnabled", true);
 
     /// <summary>The emergency admin's login name (Auth:LocalAdmin:Username, default "localadmin").</summary>
     public static string LocalAdminUsername(IConfiguration config) =>
@@ -47,10 +48,6 @@ public static class GatewayAuth
 
     /// <summary>The emergency admin's password hash, or null when the login is not set up.</summary>
     public static string? LocalAdminHash(IConfiguration config) => SecretConfig.Get(config, "Auth:LocalAdmin:PasswordHash");
-
-    /// <summary>The users table says "user" for what Firebase calls "viewer"; the dashboard sees one word.</summary>
-    public static string NormalizeRole(string? role) =>
-        string.Equals(role, RoleAdmin, StringComparison.OrdinalIgnoreCase) ? RoleAdmin : RoleViewer;
 
     /// <summary>Firebase-issued tokens go to the Firebase check; everything else to this gateway's own.</summary>
     public static string SelectScheme(HttpContext http, FirebaseLogin firebase)
@@ -70,10 +67,23 @@ public static class GatewayAuth
         }
     }
 
-    /// <summary>A Firebase token is for one client's people: refuse any other client's, and any without a role.</summary>
+    /// <summary>
+    /// A Firebase token is for one client's people — refuse any other client's, and any without a role —
+    /// or for ShotSense office staff (cloudAdmin claim, set by the cloud on every admins/{uid} account),
+    /// who get admin on every site.
+    /// </summary>
     public static Task ValidateFirebaseToken(TokenValidatedContext ctx, FirebaseLogin firebase)
     {
         var p = ctx.Principal!;
+        string email = p.FindFirst("email")?.Value ?? "";
+        string name  = p.FindFirst("name")?.Value is { Length: > 0 } n ? n : email;
+
+        if (string.Equals(p.FindFirst("cloudAdmin")?.Value, "true", StringComparison.OrdinalIgnoreCase))
+        {
+            ctx.Principal = Principal(FirebaseScheme, p.FindFirst("sub")?.Value ?? "", name, email, RoleAdmin, LoginOffice);
+            return Task.CompletedTask;
+        }
+
         if (firebase.ClientId.Length == 0)
         {
             ctx.Fail(new GatewayAuthException(
@@ -82,7 +92,8 @@ public static class GatewayAuth
         }
         if (!string.Equals(p.FindFirst("clientId")?.Value, firebase.ClientId, StringComparison.Ordinal))
         {
-            ctx.Fail(new GatewayAuthException("This account is not registered for this site."));
+            ctx.Fail(new GatewayAuthException(
+                "This email has not been added for this site. Ask ShotSense to add it, then sign in again."));
             return Task.CompletedTask;
         }
         string? role = p.FindFirst("role")?.Value;
@@ -92,36 +103,31 @@ public static class GatewayAuth
             return Task.CompletedTask;
         }
 
-        string email = p.FindFirst("email")?.Value ?? "";
-        string name  = p.FindFirst("name")?.Value is { Length: > 0 } n ? n : email;
         ctx.Principal = Principal(FirebaseScheme, p.FindFirst("sub")?.Value ?? "", name, email, role, LoginFirebase);
         return Task.CompletedTask;
     }
 
     /// <summary>
-    /// A token this gateway signed. A token from before the login claim existed came from the shared
-    /// login. The shared login's tokens die the moment it is switched off; the emergency admin's work
-    /// only on the plant network — so one obtained there is useless through the tunnel.
+    /// A token this gateway signed. Only the emergency local admin's is accepted, and only on the plant
+    /// network — so one obtained there is useless through the tunnel. Anything else this gateway ever
+    /// signed came from the removed shared login.
     /// </summary>
-    public static Task ValidateLocalToken(TokenValidatedContext ctx, IConfiguration config)
+    public static Task ValidateLocalToken(TokenValidatedContext ctx)
     {
         var p = ctx.Principal!;
-        string login = p.FindFirst(LoginClaim)?.Value ?? LoginPassword;
-
-        if (login == LoginPassword && !LegacyLoginEnabled(config))
+        if (p.FindFirst(LoginClaim)?.Value != LoginLocalAdmin)
         {
-            ctx.Fail(new GatewayAuthException("The shared login has been switched off. Sign in with your email address."));
+            ctx.Fail(new GatewayAuthException("The shared login has been removed. Sign in with your email address."));
             return Task.CompletedTask;
         }
-        if (login == LoginLocalAdmin && !NetworkOrigin.IsLocalNetwork(ctx.HttpContext))
+        if (!NetworkOrigin.IsLocalNetwork(ctx.HttpContext))
         {
             ctx.Fail(new GatewayAuthException("The local admin login works only on the plant network."));
             return Task.CompletedTask;
         }
 
-        string name = p.Identity?.Name ?? "";
-        ctx.Principal = Principal(LocalScheme, p.FindFirst(JwtRegisteredClaimNames.Jti)?.Value ?? "", name,
-            p.FindFirst(ClaimTypes.Email)?.Value ?? "", NormalizeRole(p.FindFirst(ClaimTypes.Role)?.Value), login);
+        ctx.Principal = Principal(LocalScheme, p.FindFirst(JwtRegisteredClaimNames.Jti)?.Value ?? "",
+            p.Identity?.Name ?? "", "", RoleAdmin, LoginLocalAdmin);
         return Task.CompletedTask;
     }
 

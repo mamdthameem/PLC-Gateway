@@ -3,7 +3,7 @@
 > **For client PCs, use the installer instead** (`installer/README.md`). It sets up Windows services,
 > a private PostgreSQL and the Cloudflare tunnel with no IIS, certificate or port forwarding. These IIS
 > notes still work, for a server where IIS hosting is wanted. Note that the gateway now migrates its
-> own database on start, and there is no default login: create one with `PLCGateway.exe --create-admin`.
+> own database on start, and there is no shared login (removed 2026-10-26): people sign in with email accounts from the cloud; the emergency local admin is set with `PLCGateway.exe --set-local-admin`.
 
 The gateway is a single ASP.NET Core (.NET 10) application that runs the PLC pipeline, the
 dashboard API, and the dashboard static files (React build in `wwwroot/`) in one process, hosted
@@ -325,19 +325,13 @@ $b = New-Object byte[] 48; [Security.Cryptography.RandomNumberGenerator]::Create
 
 ### 9.2 Dashboard logins
 
-On the very first start with an **empty** `users` table the gateway creates one login from
-`Seed:AdminUsername` / `Seed:AdminPassword` — `sreesakthi` / `sreesakthi` by default. A database that
-already has logins is never seeded again, so changing `Seed:*` later does nothing. Change the password
-straight away with `tools\Set-DashboardPassword.ps1`, on the machine that has the database. It is not
-part of the publish output, so copy it to the server first:
+Everyone signs in with their own email account, added in the cloud on the client's Users page; ShotSense
+office staff sign in with their cloud admin email. There is no shared username/password and no default
+login (removed 2026-10-26; the old `Seed` block and `tools\Set-DashboardPassword.ps1` are gone).
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\Set-DashboardPassword.ps1 -Username sreesakthi
-```
-
-It asks for the new password twice without showing it (at least 12 characters) and stores only its
-hash. psql may first ask for the PostgreSQL `postgres` password. If PostgreSQL is not version 18, add
-`-Psql 'C:\Program Files\PostgreSQL\<version>\bin\psql.exe'`. Repeat for every other login.
+For when the site's internet is down there is one emergency local admin (user name `localadmin`, plant
+network only). Set its password, as administrator, with `PLCGateway.exe --set-local-admin` and restart the
+gateway; only the hash is stored. The installer does this from its "Emergency local admin" page.
 
 ### 9.3 Other per-install settings
 
