@@ -8,6 +8,17 @@ export function secondsToHoursMin(sec: number): string {
   return `${h}h ${m}m`;
 }
 
+/** A cycle's run time, to the second: "4 min 32 s", "1 h 02 min 05 s". */
+export function cycleRunTime(sec: number): string {
+  if (!isFinite(sec) || sec < 0) return '—';
+  const total = Math.round(sec);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return h > 0 ? `${h} h ${pad(m)} min ${pad(s)} s` : `${m} min ${pad(s)} s`;
+}
+
 export function secondsToMinutes(sec: number): string {
   if (!isFinite(sec) || sec < 0) return '—';
   return `${(sec / 60).toFixed(1)} min`;

@@ -26,6 +26,18 @@ Any change to that controller must update this file and `sample-response.json` i
 | `GET` | `/api/admin/settings/plc` | Where the gateway reads the PLC, where that came from, whether it answers |
 | `PUT` | `/api/admin/settings/plc` | Set the PLC's address — applied within seconds, no restart |
 
+## Changes on 2026-10-28 — blast time from the completed cycles; cycle run time
+
+Same shapes; one field added, one meaning changed.
+
+- **`blast_time_sec`** (in `/live` `lifetime[]` and in every filter result) is now the **sum of the completed
+  cycles' run times**, not the raw Blast ON/OFF on-time. A cycle's run time leaves out any stretch the gateway
+  was not recording (its PC asleep or off). `machine_utility_pct` = that ÷ machine on-time, so it moves too.
+  The `/trends` `blast_on_sec` series follows the same rule (the cycles that ended in each bucket).
+- **`section2.cycles[].durationSec`** (number, seconds, 1 decimal): how long that cycle ran — the Cycle
+  Breakdown's "Ran for". It can be less than `blastEnd − blastStart` when the recording had a gap. The cycles of
+  one result add up to its `blast_time_sec`. Results calculated before this carry `blastEnd − blastStart`.
+
 ## Changes on 2026-10-26 — available impellers, tag check, PLC address
 
 Additive; nothing the cloud already calls changed shape.

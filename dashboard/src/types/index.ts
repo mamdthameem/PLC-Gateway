@@ -234,6 +234,9 @@ export interface FilteredCycle {
   cycleNumber: number;
   blastStart: string;
   blastEnd: string;
+  /** How long the cycle ran, in seconds — recorded time only (a gap while the gateway was not
+   *  recording is left out), so it can be less than end − start. */
+  durationSec: number;
   metal1Name: string | null;
   metal1WeightKg: number | null;
   metal2Name: string | null;

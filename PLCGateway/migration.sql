@@ -497,3 +497,13 @@ ALTER TABLE gateway_settings ADD COLUMN IF NOT EXISTS plc_ip          VARCHAR(45
 ALTER TABLE gateway_settings ADD COLUMN IF NOT EXISTS plc_rack        SMALLINT;
 ALTER TABLE gateway_settings ADD COLUMN IF NOT EXISTS plc_slot        SMALLINT;
 ALTER TABLE gateway_settings ADD COLUMN IF NOT EXISTS plc_updated_at  TIMESTAMP;
+
+-- Which formula built plc_daily_trends (2026-10-28). The gateway rebuilds that DERIVED table once when
+-- this is below DatabaseService.RollupVersion: version 2 takes blast_on_sec from the completed cycles
+-- (plc_cycles.duration_sec) instead of the raw Blast ON/OFF signal.
+ALTER TABLE gateway_settings ADD COLUMN IF NOT EXISTS rollup_version  INTEGER NOT NULL DEFAULT 1;
+
+-- How long each filtered cycle ran (2026-10-28): plc_cycles.duration_sec copied at calculation time,
+-- for the Cycle Breakdown's "Ran for" column. NULL on results calculated before this existed; the
+-- API then falls back to blast_end - blast_start.
+ALTER TABLE plc_filtered_cycle_data ADD COLUMN IF NOT EXISTS duration_sec NUMERIC;

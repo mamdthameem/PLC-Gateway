@@ -139,7 +139,9 @@ public class FilterService : IFilterService
                     metal_2_name, metal_2_weight_kg,
                     metal_3_name, metal_3_weight_kg,
                     metal_4_name, metal_4_weight_kg,
-                    production_kg, energy_kwh
+                    production_kg, energy_kwh,
+                    -- Results calculated before 2026-10-28 have no duration: fall back to the span.
+                    COALESCE(duration_sec, EXTRACT(EPOCH FROM (blast_end - blast_start)))::float8
                 FROM plc_filtered_cycle_data
                 WHERE request_id = @id
                 ORDER BY cycle_number ASC;";
@@ -164,7 +166,8 @@ public class FilterService : IFilterService
                     Metal4Name      = reader.IsDBNull(9)  ? null : reader.GetString(9),
                     Metal4WeightKg  = reader.IsDBNull(10) ? null : reader.GetDouble(10),
                     ProductionKg    = reader.IsDBNull(11) ? 0    : reader.GetDouble(11),
-                    EnergyKwh       = reader.IsDBNull(12) ? 0    : reader.GetDouble(12)
+                    EnergyKwh       = reader.IsDBNull(12) ? 0    : reader.GetDouble(12),
+                    DurationSec     = reader.IsDBNull(13) ? 0    : reader.GetDouble(13)
                 });
             }
         }

@@ -87,7 +87,7 @@ export function exportFilteredWorkbook(input: FilteredExportInput): void {
   // the cycle's Tonnage delta — measured, not declared, so it need not match the item weights.
   const cycleRows = [
     [
-      'Cycle No.', 'Start Time', 'End Time',
+      'Cycle No.', 'Start Time', 'End Time', 'Ran for (min)',
       'Item 1', 'Item 1 kg', 'Item 2', 'Item 2 kg',
       'Item 3', 'Item 3 kg', 'Item 4', 'Item 4 kg',
       'Tonnage Produced (kg)', 'Energy (kWh)',
@@ -96,6 +96,8 @@ export function exportFilteredWorkbook(input: FilteredExportInput): void {
       c.cycleNumber,
       localStamp(c.blastStart),
       localStamp(c.blastEnd),
+      // Minutes as a number, so the sheet can add the column up (it totals to Blast Time).
+      Math.round((c.durationSec / 60) * 100) / 100,
       declaredItemName(c.metal1Name, c.metal1WeightKg) ?? '', c.metal1WeightKg ?? '',
       declaredItemName(c.metal2Name, c.metal2WeightKg) ?? '', c.metal2WeightKg ?? '',
       declaredItemName(c.metal3Name, c.metal3WeightKg) ?? '', c.metal3WeightKg ?? '',

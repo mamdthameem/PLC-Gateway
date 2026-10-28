@@ -124,10 +124,14 @@ public class CalculationService
             double productionKg = ParseDouble(tonnageRec?.Value);
             await _db.UpsertLifetimeParameterAsync("production_qty_kg", (decimal)Math.Round(productionKg, 2));
 
-            double blastSec = state.BlastClosedSec +
-                (state.BlastOn && state.BlastSegStart.HasValue ? (now - state.BlastSegStart.Value).TotalSeconds : 0);
+            // Blast time = the sum of the completed cycles' run times (decided 2026-10-28). The raw
+            // signal's on-time (state.BlastClosedSec) also counted time the signal was left on outside
+            // a finished cycle, and time the gateway was not recording: 10 cycles of 3–6 minutes read
+            // as ~24 hours at the first client site. It is still folded, but no longer shown.
+            double blastSec = await _db.GetTotalCycleSecondsAsync();
             await _db.UpsertLifetimeParameterAsync("blast_time_sec", (decimal)Math.Round(blastSec, 1));
 
+            // Machine utility = blast time ÷ machine on-time (Machine status on).
             double machineOnSec = state.MachineClosedSec +
                 (state.MachineOn && state.MachineSegStart.HasValue ? (now - state.MachineSegStart.Value).TotalSeconds : 0);
             double machineUtility = machineOnSec > 0 ? Math.Min(blastSec / machineOnSec * 100.0, 100.0) : 0;
@@ -425,30 +429,32 @@ public class CalculationService
             }
 
             // ── Blast time / utility / cycle count ──────────────────────────────────────────
+            // Blast time is the sum of the in-scope cycles' run times in every mode (decided
+            // 2026-10-28) — the same rule as Section 1, so a filter covering all history still
+            // equals the lifetime tile. It is also the utility numerator.
+            double cyclesBlastSec = cycles.Sum(c => Math.Max(c.DurationSec, 0));
+
             if (isItemFilter)
             {
                 // Cycle-derived: the matching cycles need not be contiguous in time, so replaying
                 // an event window between the first and last of them would sweep in every other
                 // item's cycles that happen to fall in between.
                 if (want.Contains("blast_time_sec"))
-                {
-                    double blastSec = cycles.Sum(c => Math.Max((c.BlastEnd - c.BlastStart).TotalSeconds, 0));
                     await _db.InsertFilteredParameterAsync(
-                        requestId, "blast_time_sec", (decimal)Math.Round(blastSec, 1));
-                }
+                        requestId, "blast_time_sec", (decimal)Math.Round(cyclesBlastSec, 1));
 
                 if (want.Contains("cycle_count"))
                     await _db.InsertFilteredParameterAsync(requestId, "cycle_count", cycles.Count);
             }
             else
             {
-                // Time and cycle filters DO describe a contiguous span, so the event replay stays —
-                // it correctly counts blast seconds at the window edges that no completed cycle row
-                // covers. Each query below is skipped when nothing selected needs it.
+                // Time and cycle filters describe a contiguous span: the machine on-time (utility
+                // denominator) and the rising-edge cycle count are replayed over it. Each query below
+                // is skipped when nothing selected needs it.
                 DateTime windowStart = cycles.Count > 0 ? cycles.Min(c => c.BlastStart) : filterStart;
                 DateTime windowEnd   = cycles.Count > 0 ? cycles.Max(c => c.BlastEnd)   : filterEnd;
 
-                var windowParams = await ComputeWindowParametersAsync(windowStart, windowEnd, want);
+                var windowParams = await ComputeWindowParametersAsync(windowStart, windowEnd, want, cyclesBlastSec);
                 foreach (var kv in windowParams)
                     await _db.InsertFilteredParameterAsync(requestId, kv.Key, kv.Value);
             }
@@ -487,26 +493,21 @@ public class CalculationService
     // Shared window parameters for time and cycle filters: replays the (bounded) event stream for
     // the window — acceptable here because Section 2 is user-triggered and windowed.
     //
-    // Only the queries the selection actually needs are issued. The Blast ON/OFF read is shared by
-    // all three parameters (it is the utility numerator as well as its own), so it runs when any
-    // one of them is wanted; the separate Machine status read runs only for machine_utility_pct.
+    // Only the queries the selection actually needs are issued. Blast time is the in-scope cycles'
+    // run time (blastSec, from the caller). The Blast ON/OFF read serves cycle_count and anchors the
+    // machine on-time window; the Machine status read runs only for machine_utility_pct.
     private async Task<Dictionary<string, decimal?>> ComputeWindowParametersAsync(
-        DateTime start, DateTime end, HashSet<string> want)
+        DateTime start, DateTime end, HashSet<string> want, double blastSec)
     {
         var result = new Dictionary<string, decimal?>();
 
-        bool needBlast = want.Contains("blast_time_sec")
-                      || want.Contains("cycle_count")
-                      || want.Contains("machine_utility_pct");
-        if (!needBlast) return result;
-
-        var blastRecords = await _db.GetStateChangesAsync(TAG_BLAST, start, end, includeStart: true);
-
-        double blastSec = ComputeOnTimeSeconds(blastRecords, start, end,
-            isOn: v => v == "1" || v?.ToLower() == "true");
-
         if (want.Contains("blast_time_sec"))
             result["blast_time_sec"] = (decimal)Math.Round(blastSec, 1);
+
+        bool needBlastEvents = want.Contains("cycle_count") || want.Contains("machine_utility_pct");
+        if (!needBlastEvents) return result;
+
+        var blastRecords = await _db.GetStateChangesAsync(TAG_BLAST, start, end, includeStart: true);
 
         if (want.Contains("machine_utility_pct"))
         {

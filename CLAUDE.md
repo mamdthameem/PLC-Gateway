@@ -106,12 +106,12 @@ Industry project. A single **unified ASP.NET Core (.NET 10) application** hosted
 
 | `parameter_name`            | Formula                                                                             | Source tags                                            |
 | --------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| `machine_status`            | `value ≠ "0" → 1, else 0`                                                           | `Machine status` BYTE at `DB60.DBB0`, live from Tier 1 |
-| `machine_utility_pct`       | `blast_time_sec ÷ machine_on_time_sec × 100`                                        | `Blast ON/OFF`, `Machine status` from Tier 2           |
+| `machine_status`            | `value ≠ "0" → 1, else 0` — the machine is ON                                        | `Machine status`, live from Tier 1: BYTE `DB60.DBB0` (dev site); BOOL `DB600.DBX0.0`, the PLC's "running" bit, at the DB600 site |
+| `machine_utility_pct`       | `blast_time_sec ÷ machine_on_time_sec × 100` (blast time = the completed cycles, below) | `plc_cycles`, `Machine status` from Tier 2          |
 | `production_qty_kg`         | Latest raw `Tonnage` value                                                          | `Tonnage` from Tier 1 (PLC is running accumulator)     |
 | `energy_kwh_total`          | `Σ (avg_amps_per_impeller × cycle_duration_hours)` across the **selected** impellers (`gateway_settings`) × all cycles | `plc_cycles` + `Current_imp_N` from Tier 2 |
 | `energy_per_casting_kwh_kg` | `energy_kwh_total ÷ production_qty_kg`                                              | derived                                                |
-| `blast_time_sec`            | Total seconds where `Blast ON/OFF = true`                                           | `Blast ON/OFF` Tier 2                                  |
+| `blast_time_sec`            | `Σ plc_cycles.duration_sec` — the completed cycles' run times (since 2026-10-28; see "Blast time is the completed cycles") | `plc_cycles` |
 | `cycle_count`               | Rising edges `0→1` on `Blast ON/OFF`                                                | `Blast ON/OFF` Tier 2                                  |
 | `avg_shot_refill_time_sec`  | Elapsed time since first refill ÷ refill count                                      | `Refil shots weight` Tier 2                            |
 | `last_refill_epoch_sec`     | Unix epoch of latest `Refil shots weight` change                                    | `Refil shots weight` Tier 2                            |
@@ -164,6 +164,7 @@ Maintained by the incremental engine via upsert (no TRUNCATE), so the dashboard 
 | ------------------- | ----------------------------------------------------------------------------------- |
 | production          | **Reported per casting metal, not as a scalar.** `plc_filtered_metal_production` holds `Σ` declared `Casting metal N weight` grouped by metal name over the in-scope cycles. Not derived from `Tonnage` at all. |
 | `energy_kwh_total`  | `Σ plc_cycles.energy_kwh` over in-scope cycles                                       |
+| `blast_time_sec`    | `Σ plc_cycles.duration_sec` over in-scope cycles, in every filter mode — so a filter covering all history equals Section 1. It is also the `machine_utility_pct` numerator |
 | `energy_per_casting_kwh_kg` | `energy_kwh_total ÷ (total declared metal weight)` — same denominator as the per-metal table, so "per casting kg" means one thing in Section 2 |
 | `machine_status`    | Not included                                                                        |
 | `avg_shot_refill_time_sec`, `last_refill_epoch_sec`, `effective_shots_usage_kg_per_ton`, shots breakdown | Not included — Section 1 only, does not respond to any filter. (`production_qty_kg` IS in Section 2, with a different formula — see below) |
@@ -179,6 +180,7 @@ Maintained by the incremental engine via upsert (no TRUNCATE), so the dashboard 
 
 | Column          | Formula                                                    |
 | --------------- | ---------------------------------------------------------- |
+| `duration_sec`  | `plc_cycles.duration_sec`, copied at calculation time — the Cycle Breakdown's **"Ran for"** column (Excel: "Ran for (min)"), which adds up to Blast Time. Results calculated before 2026-10-28 have none; the API falls back to `blast_end − blast_start` |
 | `production_kg` | `tonnage_kg(this cycle) − tonnage_kg(prev cycle)`, floor 0. Shown as **"Tonnage Produced (kg)"** in the Cycle Log and Excel (was "Weight (kg)", which read as the sum of the declared item weights beside it) |
 | `energy_kwh`    | `avg_amps_all_impellers × cycle_duration_hours`            |
 
@@ -223,7 +225,7 @@ state), so it is filtered out of the grid itself.
 | `production_qty_kg` | All-time production: bars = produced per bucket, line = cumulative `Tonnage` | **Bar chart of declared weight per casting item** (`ItemProductionGraph`, from `plc_filtered_metal_production`). The scalar is the total of those bars — a different formula from Section 1's, by design |
 | `energy_kwh_total` | All-time energy per bucket, `/api/trends` | Per-cycle bars (`plc_filtered_cycle_data`) |
 | `energy_per_casting_kwh_kg` | **n/a — scalar only** | **n/a — scalar only.** kWh/kg drifts by thousandths across a bucket, so any axis fitted to it turns rounding into an apparent trend |
-| `blast_time_sec` | Blast hours per bucket, `/api/trends` (`blast_on_sec`) | Same chart over the filter window (time filter only) |
+| `blast_time_sec` | Blast hours per bucket, `/api/trends` (`blast_on_sec` = the cycles that ended in that bucket) | Same chart over the filter window (time filter only) |
 | `cycle_count` | Completed cycles per bucket, `/api/trends` (`cycle_count`) | Same chart over the filter window (time filter only) |
 | Amps tile (×10) | **Every recorded cycle, one point each** — that cycle's average current (`GET /api/amps/by-cycle`); 1 463 cycles in ~130 ms / 109 KB. The x-axis is CYCLE NUMBER, not time, so the trace does not return to zero between points and must not: nothing exists "between" cycle 960 and 961 to plot. The rise across the series is the blade-wear model. A per-sample view on 5/25/100-cycle ranges was built alongside this and **removed as redundant**; restoring it needs a time axis over a bounded window, since per-second detail across all cycles is ~178 000 samples per impeller. The tile headline is **always** the live Tier 1 reading, including 0 A between loads; while the impeller is not turning, the **last completed cycle's average** (`GET /api/amps/last-cycle`) is shown underneath as "ran at N A" | Same tile/dialog layout, driven by the FilterBar (all three modes, incl. custom range): tile shows a duration-weighted average current for the filter's cycles (`plc_filtered_amps_data`), dialog chart is one point per cycle (`AVG(value_num)` in that cycle's blast window) instead of raw per-second samples. **All cycles are plotted** — the old 200-cycle cap silently dropped ~1 250 of 1 448 while the tile beside it averaged every one |
 | "Blast Cycles per Refill Interval" | Bar chart of `plc_shots_breakdown` — one bar per refill, height = blast cycles until the next refill. Labels are **date only**; a clock time is added only to bars that share a date with another | **n/a — removed from Section 2.** A refill interval spans whatever cycles fall in it, mixing items, so no filter scopes it meaningfully. Section 1 only, above the filter bar |
@@ -304,7 +306,7 @@ their values are last-known and not advancing. Recording continues regardless.
 
 | Tag                                | Type   | Address      |
 | ---------------------------------- | ------ | ------------ |
-| `Machine status`                   | BYTE   | DB60.DBB0    |
+| `Machine status`                   | BYTE / BOOL | DB60.DBB0 (dev site); DB600.DBX0.0 "running" = machine on (DB600 site; DBX0.1 is "Machine status on", not used) |
 | `Blast ON/OFF`                     | BOOL   | —            |
 | `Tonnage`                          | DINT   | —            |
 | `Refil shots weight`               | DINT   | DB60.DBD2    |
@@ -616,13 +618,36 @@ address, link state and tag file version. It exists to compare against TIA Porta
 reads 0 (a wrong address or type shows at once). **Never on the gateway dashboard**: the tag list is private
 to the office, so it is served only behind the admin API key.
 
+## Blast time is the completed cycles (2026-10-28)
+
+**`blast_time_sec` = the sum of the completed cycles' `duration_sec`** — Section 1, every Section 2 filter
+mode, and the daily graph (`plc_daily_trends.blast_on_sec` = the cycles that ENDED that day). Decided after
+the first client site showed ~24 h of Blast Time for 10 cycles of 3–6 minutes: the old figure was the raw
+`Blast ON/OFF` on-time, which also counted time the signal was left on outside a finished cycle and time the
+gateway was not recording. The Cycle Breakdown's "Ran for" column now adds up to it exactly.
+
+- **A cycle's `duration_sec` is recorded time only** (`CycleTrackingService`, `DatabaseService.GetRecordedSecondsAsync`):
+  the steps between consecutive `Blast ON/OFF` rows inside the run, each counted up to `max(300 s, 5 × heartbeat)`.
+  The tag is a heartbeat tag, so a recording gateway writes a row at least every 60 s; a longer step means the
+  laptop slept or was off, and is not run time. Verified on a synthetic 2 h 06 min blast with a 1 h 55 min hole:
+  960 s counted. If `Blast ON/OFF` is ever removed from `HeartbeatTags`, the rule switches itself off
+  (duration = end − start) — change-only rows cannot tell a gap from a long blast. Energy uses the same duration.
+  Cycles recorded before this keep their stored duration.
+- `machine_utility_pct` = blast time ÷ machine on-time (`Machine status` on), in Section 1, Section 2 and the graph.
+- `cycle_count` is unchanged (rising edges of `Blast ON/OFF`). `CalculationService.FoldBlast` still folds the raw
+  on-time into `plc_aggregation_state.blast_closed_sec`, which nothing shows any more.
+- **The daily rollup was rebuilt once** on upgrade: `gateway_settings.rollup_version` < `DatabaseService.RollupVersion`
+  (2) ⇒ clear `plc_daily_trends` and backfill at startup. It is derived data; nothing is lost.
+- Machine on-time (the utility denominator) still has **no** recording-gap guard in Section 1 — see Pending items.
+
 ## Running vs Loading vs Stopped
 
 `MachineStatusTile` shows three states, not two:
 
-- **Running** — blast on.
-- **Loading** — powered and reachable, not blasting: the plant is loading the next batch. A normal
-  state, and most of any shift. (Labelled "Idle" until 2026-09; only the wording changed.)
+- **Running** — the machine is on: `Machine status` ≠ 0. At the DB600 site that is the PLC's "running"
+  bit `DBX0.0`, which the site defines as "machine on" (decided 2026-10-28). The tile does **not** look at
+  blasting. (It was mapped to `DBX0.1` at first, which read Loading while the machine ran.)
+- **Loading** — reachable, `Machine status` 0. (Labelled "Idle" until 2026-09; only the wording changed.)
 - **Stopped** — the gateway cannot reach the PLC, so the zero is inferred rather than measured
   (the backend forces the value to 0 and flags the row stale).
 
@@ -811,7 +836,7 @@ Two people filtering at once must never change each other's dashboard. Rules:
 - **Commissioning `Tonnage` baseline for `effective_shots_usage_kg_per_ton`** — investigated, **deliberately not built**. `production_qty_kg` is the PLC's own lifetime accumulator while `total_refill_weight_kg` only accumulates from gateway commissioning, so on a gateway retrofitted to a running machine the ratio under-reports shot consumption (converging as history grows). A fix means storing `baseline_tonnage_kg` + `baseline_tonnage_set` in `plc_aggregation_state`, seeding from the earliest Tier 2 `Tonnage` row, and clearing both on `--rebuild-aggregation`. **The client decided `production_qty_kg` stays as raw `Tonnage`.** Applying a baseline to only the usage denominator would leave the two tiles mutually inconsistent — settle that with the client before building it. Full write-up in README, "Effective Shots Usage".
 - **`plc_historical_data` partitioning** — recommended within a couple of years (monthly declarative partitioning, retains every row). See README "Scaling".
 - **1 Hz `BLAST_ON` current logging** — `GatewayWorker` writes 10 impeller-current rows *per second* while blast is ON, which is 60–80% of all Tier 2 rows. Coarsening it to 5–10 s would cut storage 5–10× with negligible effect on cycle-average energy, but would coarsen the per-cycle `AmpsGraph` trace. Client decision, unchanged.
-- **Recording gaps inflate the Section 1 lifetime scalars.** `FoldBlast`/`FoldMachine` in `CalculationService` accumulate the full span between consecutive events with no cap, so a multi-week gateway outage is counted as runtime. The `plc_daily_trends` rollup **does** guard against this (segments over 5 min are treated as gaps), which is why a graph bucket and the lifetime scalar can disagree after an outage. The scalar was left alone deliberately — changing it would silently move a long-standing headline number. Decide with the client before touching it.
+- **Recording gaps inflate the Section 1 machine on-time.** (Blast time no longer: since 2026-10-28 it is the completed cycles, which leave gaps out.) `FoldMachine` in `CalculationService` accumulates the full span between consecutive events with no cap, so a laptop asleep with the machine on counts as machine on-time and lowers utility. The `plc_daily_trends` rollup **does** guard against this (segments over 5 min are treated as gaps), which is why a graph bucket and the lifetime scalar can disagree after an outage. The scalar was left alone deliberately — changing it would silently move a long-standing headline number. Decide with the client before touching it.
 - **`plc_historical_data` carries more redundant indexes.** Beyond the `idx_historical_name_time` dropped in this pass, `idx_historical_parameter` (`parameter_name`) is a prefix of `idx_historical_name_num`, and `idx_historical_address` is a prefix of `idx_historical_address_timestamp` — 7 indexes total on the hottest write path. Dropping the two prefixes is a further easy write-cost win; not done here because it was outside the agreed scope.
 
 ---

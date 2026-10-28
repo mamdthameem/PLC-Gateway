@@ -5,6 +5,9 @@ public class FilteredCycleDto
     public int CycleNumber { get; set; }
     public DateTime BlastStart { get; set; }
     public DateTime BlastEnd { get; set; }
+
+    /// <summary>How long the cycle ran, in seconds (plc_cycles.duration_sec: recorded time only).</summary>
+    public double DurationSec { get; set; }
     public string? Metal1Name { get; set; }
     public double? Metal1WeightKg { get; set; }
     public string? Metal2Name { get; set; }

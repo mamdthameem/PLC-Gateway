@@ -11,7 +11,7 @@ import CycleDataGraph from './CycleDataGraph';
 import TrendMetricGraph from './TrendMetricGraph';
 import ItemProductionGraph from './ItemProductionGraph';
 import FilteredAmpsPanel from './FilteredAmpsPanel';
-import { byParamOrder, declaredItemName } from '../utils/unitConverters';
+import { byParamOrder, cycleRunTime, declaredItemName } from '../utils/unitConverters';
 import { exportFilteredWorkbook } from '../utils/exportFilteredExcel';
 import type {
   FilterResult, FilteredCycle, FilteredMetalProduction, Section2ParamKey,
@@ -86,7 +86,8 @@ function ItemProductionTable({ items }: { items: FilteredMetalProduction[] }) {
 }
 
 /**
- * Per-cycle breakdown — timestamps, the four declared item slots, production and energy per cycle.
+ * Per-cycle breakdown — start, end and how long the cycle ran, the four declared item slots,
+ * production and energy per cycle. "Ran for" is what Blast Time adds up.
  *
  * Also data the tiles do not carry: the tiles show filter-wide totals, this shows what each
  * individual cycle contributed and which items it declared. Kept for the same reason.
@@ -107,6 +108,7 @@ function CycleTable({ cycles }: { cycles: FilteredCycle[] }) {
             <TableCell sx={{ fontWeight: 700 }}>Cycle No.</TableCell>
             <TableCell sx={{ fontWeight: 700 }}>Start Time</TableCell>
             <TableCell sx={{ fontWeight: 700 }}>End Time</TableCell>
+            <TableCell align="right" sx={{ fontWeight: 700 }}>Ran for</TableCell>
             <TableCell sx={{ fontWeight: 700 }}>Item 1</TableCell>
             <TableCell sx={{ fontWeight: 700 }}>Item 2</TableCell>
             <TableCell sx={{ fontWeight: 700 }}>Item 3</TableCell>
@@ -123,6 +125,7 @@ function CycleTable({ cycles }: { cycles: FilteredCycle[] }) {
               <TableCell>{c.cycleNumber}</TableCell>
               <TableCell>{new Date(c.blastStart).toLocaleString()}</TableCell>
               <TableCell>{new Date(c.blastEnd).toLocaleString()}</TableCell>
+              <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>{cycleRunTime(c.durationSec)}</TableCell>
               <TableCell>{itemCell(c.metal1Name, c.metal1WeightKg)}</TableCell>
               <TableCell>{itemCell(c.metal2Name, c.metal2WeightKg)}</TableCell>
               <TableCell>{itemCell(c.metal3Name, c.metal3WeightKg)}</TableCell>

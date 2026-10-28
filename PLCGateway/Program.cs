@@ -285,10 +285,20 @@ using (var scope = app.Services.CreateScope())
     // Daily trend rollup backfill: only when empty (fresh install, or just reset above). Cost is
     // proportional to existing history, so it is a one-time job — the per-minute path afterwards
     // only ever touches yesterday+today.
+    // The rollup is also rebuilt once when the formula behind it changed (RollupVersion). It is
+    // derived data, fully reconstructible from Tier 2 + plc_cycles, so clearing it loses nothing.
     try
     {
-        if (await db.DailyTrendsEmptyAsync())
+        bool empty = await db.DailyTrendsEmptyAsync();
+        if (!empty && await db.GetRollupVersionAsync() < DatabaseService.RollupVersion)
+        {
+            await db.ResetDailyTrendsAsync();
+            logger.LogWarning("Daily trend rollup cleared to rebuild it: blast time now comes from the completed cycles.");
+            empty = true;
+        }
+        if (empty)
             await db.BackfillDailyTrendsAsync();
+        await db.SetRollupVersionAsync(DatabaseService.RollupVersion);
     }
     catch (Exception ex) { logger.LogError(ex, "Daily trend backfill failed."); }
 

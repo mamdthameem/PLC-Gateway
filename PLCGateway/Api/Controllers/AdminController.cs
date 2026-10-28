@@ -113,6 +113,7 @@ public class AdminController : ControllerBase
                 cycleNumber    = c.CycleNumber,
                 blastStart     = ToUtc(c.BlastStart),
                 blastEnd       = ToUtc(c.BlastEnd),
+                durationSec    = Math.Round(c.DurationSec, 1),
                 metal1Name     = c.Metal1Name,
                 metal1WeightKg = c.Metal1WeightKg,
                 metal2Name     = c.Metal2Name,
