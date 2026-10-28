@@ -216,10 +216,13 @@ public class DatabaseService
         if (string.IsNullOrEmpty(parameterName)) return null;
 
         PlcCurrentValue? result = null;
+        // Newest first: after a PLC's data block moves (DB60 → DB600) the old address's row stays in
+        // Tier 1 under the same name, frozen; the live one is the one still being updated.
         string sql = $@"
             SELECT address, parameter_name, {ValueExpr}, data_type, last_updated, last_stored_historical, last_heartbeat, is_stale
             FROM plc_current_values
             WHERE parameter_name = @name
+            ORDER BY last_updated DESC NULLS LAST
             LIMIT 1";
 
         await RetryAsync(async conn =>
@@ -310,6 +313,55 @@ public class DatabaseService
                 result = Convert.ToDateTime(scalar);
         }, $"GetRunStartTimestampBefore {parameterName}");
 
+        return result;
+    }
+
+    // How long a run [start, end] was actually OBSERVED (decided 2026-10-28): the steps between
+    // consecutive rows of the tag, each counted up to maxStepSec. While the gateway records, a
+    // heartbeat tag has a row at least every PeriodicHeartbeatSeconds, so a longer step means it was
+    // not recording — the laptop asleep or switched off — and only the first maxStepSec of it counts.
+    // Without a gap this equals end − start exactly. Call it only for a heartbeat tag: a tag stored
+    // on change alone legitimately goes minutes without a row.
+    public async Task<double> GetRecordedSecondsAsync(string parameterName, DateTime start, DateTime end, double maxStepSec)
+    {
+        double result = 0;
+
+        const string sql = @"
+            SELECT COALESCE(SUM(LEAST(EXTRACT(EPOCH FROM (nxt - ts)), @max_step)), 0)
+            FROM (
+                SELECT timestamp AS ts, LEAD(timestamp) OVER (ORDER BY timestamp) AS nxt
+                FROM plc_historical_data
+                WHERE parameter_name = @name AND timestamp >= @start AND timestamp <= @end
+            ) s
+            WHERE nxt IS NOT NULL";
+
+        await RetryAsync(async conn =>
+        {
+            await using var cmd = new NpgsqlCommand(sql, conn);
+            cmd.Parameters.AddWithValue("name", parameterName);
+            cmd.Parameters.AddWithValue("start", start);
+            cmd.Parameters.AddWithValue("end", end);
+            cmd.Parameters.AddWithValue("max_step", maxStepSec);
+            var scalar = await cmd.ExecuteScalarAsync();
+            if (scalar != null && scalar != DBNull.Value)
+                result = Convert.ToDouble(scalar);
+        }, $"GetRecordedSeconds {parameterName}");
+
+        return result;
+    }
+
+    // Blast time (decided 2026-10-28): the sum of the completed cycles' durations — not the raw
+    // Blast ON/OFF signal, which also counted time the signal was left on outside a finished cycle.
+    public async Task<double> GetTotalCycleSecondsAsync()
+    {
+        double result = 0;
+        await RetryAsync(async conn =>
+        {
+            await using var cmd = new NpgsqlCommand("SELECT COALESCE(SUM(duration_sec), 0) FROM plc_cycles", conn);
+            var scalar = await cmd.ExecuteScalarAsync();
+            if (scalar != null && scalar != DBNull.Value)
+                result = Convert.ToDouble(scalar);
+        }, "GetTotalCycleSeconds");
         return result;
     }
 
@@ -655,12 +707,12 @@ public class DatabaseService
 
         const string sql = @"
             INSERT INTO plc_filtered_cycle_data
-                (request_id, cycle_number, blast_start, blast_end,
+                (request_id, cycle_number, blast_start, blast_end, duration_sec,
                  metal_1_name, metal_1_weight_kg, metal_2_name, metal_2_weight_kg,
                  metal_3_name, metal_3_weight_kg, metal_4_name, metal_4_weight_kg,
                  production_kg, energy_kwh)
             VALUES
-                (@request_id, @cycle_number, @blast_start, @blast_end,
+                (@request_id, @cycle_number, @blast_start, @blast_end, @duration_sec,
                  @m1n, @m1w, @m2n, @m2w, @m3n, @m3w, @m4n, @m4w,
                  @production, @energy)";
 
@@ -674,6 +726,7 @@ public class DatabaseService
                 cmd.Parameters.AddWithValue("cycle_number", cycle.CycleNumber);
                 cmd.Parameters.AddWithValue("blast_start",  cycle.BlastStart);
                 cmd.Parameters.AddWithValue("blast_end",    cycle.BlastEnd);
+                cmd.Parameters.AddWithValue("duration_sec", (decimal)Math.Round(cycle.DurationSec, 1));
                 cmd.Parameters.AddWithValue("m1n", cycle.Metal1Name is null ? (object)DBNull.Value : cycle.Metal1Name);
                 cmd.Parameters.AddWithValue("m1w", cycle.Metal1WeightKg.HasValue ? (object)(decimal)cycle.Metal1WeightKg.Value : DBNull.Value);
                 cmd.Parameters.AddWithValue("m2n", cycle.Metal2Name is null ? (object)DBNull.Value : cycle.Metal2Name);
@@ -1034,6 +1087,34 @@ public class DatabaseService
     //
     // DISCONNECT rows are deliberately NOT filtered out: they carry the forced-OFF that makes a
     // clean, observed disconnect contribute zero without relying on the gap guard at all.
+    //
+    // blast_on_sec is NOT segment maths (since 2026-10-28, RollupVersion 2): it is the sum of the
+    // completed cycles' duration_sec, by the day each cycle ended — the same rule as the Blast Time
+    // tile. The segment maths above now serve machine_on_sec only; the Blast ON/OFF events still give
+    // cycle_count (rising edges).
+    public const int RollupVersion = 2;
+
+    public async Task<int> GetRollupVersionAsync()
+    {
+        int version = 1;
+        await RetryAsync(async conn =>
+        {
+            await using var cmd = new NpgsqlCommand("SELECT rollup_version FROM gateway_settings WHERE id = 1", conn);
+            if (await cmd.ExecuteScalarAsync() is int v) version = v;
+        }, "GetRollupVersion");
+        return version;
+    }
+
+    public async Task SetRollupVersionAsync(int version)
+    {
+        await RetryAsync(async conn =>
+        {
+            await using var cmd = new NpgsqlCommand("UPDATE gateway_settings SET rollup_version = @v WHERE id = 1", conn);
+            cmd.Parameters.AddWithValue("v", version);
+            await cmd.ExecuteNonQueryAsync();
+        }, "SetRollupVersion");
+    }
+
     public async Task UpsertDailyTrendsAsync(DateTime fromDay, DateTime toExclusive)
     {
         const string sql = @"
@@ -1055,22 +1136,6 @@ public class DatabaseService
                 FROM plc_historical_data
                 WHERE parameter_name = @machine_tag
                   AND timestamp >= @from - INTERVAL '1 day' AND timestamp < @to
-            ),
-            blast_sec AS (
-                SELECT g::date AS day,
-                       SUM(GREATEST(EXTRACT(EPOCH FROM (
-                           LEAST(s.capped_end, g + INTERVAL '1 day') - GREATEST(s.ts, g)
-                       )), 0)) AS v
-                FROM (
-                    SELECT ts, LEAST(seg_end, ts + @max_seg_sec * INTERVAL '1 second') AS capped_end
-                    FROM blast_ev WHERE is_on
-                ) s
-                CROSS JOIN LATERAL generate_series(
-                    date_trunc('day', s.ts),
-                    date_trunc('day', s.capped_end - INTERVAL '1 microsecond'),
-                    INTERVAL '1 day') g
-                WHERE g::date >= @from
-                GROUP BY 1
             ),
             mach_sec AS (
                 SELECT g::date AS day,
@@ -1095,7 +1160,8 @@ public class DatabaseService
             cyc AS (
                 SELECT blast_end::date AS day,
                        SUM(COALESCE(production_kg, 0)) AS prod,
-                       SUM(COALESCE(energy_kwh, 0))    AS kwh
+                       SUM(COALESCE(energy_kwh, 0))    AS kwh,
+                       SUM(COALESCE(duration_sec, 0))  AS blast
                 FROM plc_cycles
                 WHERE blast_end >= @from AND blast_end < @to
                 GROUP BY 1
@@ -1109,8 +1175,7 @@ public class DatabaseService
                 ORDER BY timestamp::date, timestamp DESC
             ),
             days AS (
-                SELECT day FROM blast_sec
-                UNION SELECT day FROM mach_sec
+                SELECT day FROM mach_sec
                 UNION SELECT day FROM edges
                 UNION SELECT day FROM cyc
                 UNION SELECT day FROM tonn
@@ -1120,14 +1185,13 @@ public class DatabaseService
                  production_kg, energy_kwh, tonnage_end, updated_at)
             SELECT d.day,
                    ROUND(COALESCE(m.v, 0)::numeric, 1),
-                   ROUND(COALESCE(b.v, 0)::numeric, 1),
+                   ROUND(COALESCE(c.blast, 0)::numeric, 1),
                    COALESCE(e.v, 0)::int,
                    ROUND(COALESCE(c.prod, 0), 2),
                    ROUND(COALESCE(c.kwh, 0), 6),
                    t.v,
                    NOW()
             FROM days d
-            LEFT JOIN blast_sec b ON b.day = d.day
             LEFT JOIN mach_sec  m ON m.day = d.day
             LEFT JOIN edges     e ON e.day = d.day
             LEFT JOIN cyc       c ON c.day = d.day
@@ -1308,6 +1372,62 @@ public class DatabaseService
             : null;
     }
 
+    // The PLC address saved from the cloud, or null when none was (the settings file's PLC:* applies).
+    // Startup only, so not routed through RetryAsync — same reasoning as GetImpellerSelectionAsync.
+    public async Task<PlcEndpoint?> GetSavedPlcEndpointAsync()
+    {
+        await using var conn = new NpgsqlConnection(_connectionString);
+        await conn.OpenAsync();
+        await using var cmd = new NpgsqlCommand(
+            "SELECT plc_ip, plc_rack, plc_slot FROM gateway_settings WHERE id = 1 AND plc_ip IS NOT NULL", conn);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        if (!await reader.ReadAsync()) return null;
+        return new PlcEndpoint(reader.GetString(0),
+            reader.IsDBNull(1) ? (short)0 : reader.GetInt16(1),
+            reader.IsDBNull(2) ? (short)1 : reader.GetInt16(2));
+    }
+
+    // Not routed through RetryAsync: the cloud must be told when a save did not happen.
+    public async Task SavePlcEndpointAsync(PlcEndpoint endpoint, string? updatedBy)
+    {
+        await using var conn = new NpgsqlConnection(_connectionString);
+        await conn.OpenAsync();
+        await using var cmd = new NpgsqlCommand(
+            @"INSERT INTO gateway_settings (id, plc_ip, plc_rack, plc_slot, plc_updated_at, updated_at, updated_by)
+              VALUES (1, @ip, @rack, @slot, NOW(), NOW(), @updated_by)
+              ON CONFLICT (id) DO UPDATE SET
+                  plc_ip = EXCLUDED.plc_ip, plc_rack = EXCLUDED.plc_rack, plc_slot = EXCLUDED.plc_slot,
+                  plc_updated_at = EXCLUDED.plc_updated_at,
+                  updated_at = EXCLUDED.updated_at, updated_by = EXCLUDED.updated_by", conn);
+        cmd.Parameters.AddWithValue("ip", endpoint.IpAddress);
+        cmd.Parameters.AddWithValue("rack", endpoint.Rack);
+        cmd.Parameters.AddWithValue("slot", endpoint.Slot);
+        cmd.Parameters.AddWithValue("updated_by", (object?)updatedBy ?? DBNull.Value);
+        await cmd.ExecuteNonQueryAsync();
+        _logger.LogInformation("PLC address saved ({plc}) by {user}.", endpoint, updatedBy ?? "unknown");
+    }
+
+    // Every configured tag's latest reading (Tier 1), for the cloud's Tag check page. Keyed by address,
+    // as plc_current_values is; the caller pairs the rows with the tag file's own list.
+    public async Task<Dictionary<string, (string? Value, DateTime? LastUpdated, bool IsStale)>> GetCurrentValuesByAddressAsync()
+    {
+        var result = new Dictionary<string, (string?, DateTime?, bool)>(StringComparer.OrdinalIgnoreCase);
+        await using var conn = new NpgsqlConnection(_connectionString);
+        await conn.OpenAsync();
+        await using var cmd = new NpgsqlCommand(
+            $@"SELECT cv.address, {SqlExpressions.TypedValue("cv")}, cv.last_updated, COALESCE(cv.is_stale, FALSE)
+               FROM plc_current_values cv", conn);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            result[reader.GetString(0)] = (
+                reader.IsDBNull(1) ? null : reader.GetValue(1)?.ToString(),
+                reader.IsDBNull(2) ? null : reader.GetDateTime(2),
+                reader.GetBoolean(3));
+        }
+        return result;
+    }
+
     // Saves a new impeller selection and brings every stored energy figure into line with it, in
     // ONE transaction, so no reader ever sees recalculated cycles beside an old total:
     //   1. gateway_settings.selected_impellers
@@ -1391,7 +1511,9 @@ public class DatabaseService
             {
                 string? address = null, lastValue = null, dataType = null;
                 await using (var read = new NpgsqlCommand(
-                    $"SELECT address, {ValueExpr}, data_type FROM plc_current_values WHERE parameter_name = @name LIMIT 1",
+                    // Newest row first: after a tag file moves a tag to another address, the old
+                    // address's row can still carry the name until the next scan renames it.
+                    $"SELECT address, {ValueExpr}, data_type FROM plc_current_values WHERE parameter_name = @name ORDER BY last_updated DESC NULLS LAST LIMIT 1",
                     conn, tx))
                 {
                     read.Parameters.AddWithValue("name", tagName);

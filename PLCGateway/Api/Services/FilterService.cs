@@ -139,7 +139,9 @@ public class FilterService : IFilterService
                     metal_2_name, metal_2_weight_kg,
                     metal_3_name, metal_3_weight_kg,
                     metal_4_name, metal_4_weight_kg,
-                    production_kg, energy_kwh
+                    production_kg, energy_kwh,
+                    -- Results calculated before 2026-10-28 have no duration: fall back to the span.
+                    COALESCE(duration_sec, EXTRACT(EPOCH FROM (blast_end - blast_start)))::float8
                 FROM plc_filtered_cycle_data
                 WHERE request_id = @id
                 ORDER BY cycle_number ASC;";
@@ -164,7 +166,8 @@ public class FilterService : IFilterService
                     Metal4Name      = reader.IsDBNull(9)  ? null : reader.GetString(9),
                     Metal4WeightKg  = reader.IsDBNull(10) ? null : reader.GetDouble(10),
                     ProductionKg    = reader.IsDBNull(11) ? 0    : reader.GetDouble(11),
-                    EnergyKwh       = reader.IsDBNull(12) ? 0    : reader.GetDouble(12)
+                    EnergyKwh       = reader.IsDBNull(12) ? 0    : reader.GetDouble(12),
+                    DurationSec     = reader.IsDBNull(13) ? 0    : reader.GetDouble(13)
                 });
             }
         }
@@ -289,7 +292,7 @@ public class FilterService : IFilterService
         return byImpeller.Values.OrderBy(d => d.ImpellerNumber).ToList();
     }
 
-    public async Task<FilteredRequestInfoDto?> GetLatestCompletedAsync()
+    public async Task<FilteredRequestInfoDto?> GetRequestAsync(int requestId)
     {
         try
         {
@@ -299,13 +302,12 @@ public class FilterService : IFilterService
             const string sql = @"
                 SELECT id, filter_by, filter_start, filter_end, period_label,
                        filter_cycle_from, filter_cycle_to, filter_metal_name, processed_at,
-                       selected_parameters
+                       selected_parameters, status
                 FROM calculation_requests
-                WHERE status = 'done'
-                ORDER BY id DESC
-                LIMIT 1;";
+                WHERE id = @id;";
 
             await using var cmd = new NpgsqlCommand(sql, conn);
+            cmd.Parameters.AddWithValue("id", requestId);
             await using var reader = await cmd.ExecuteReaderAsync();
 
             if (!await reader.ReadAsync()) return null;
@@ -320,12 +322,13 @@ public class FilterService : IFilterService
                 FilterCycleTo   = reader.IsDBNull(6) ? null : reader.GetInt32(6),
                 FilterMetalName = reader.IsDBNull(7) ? null : reader.GetString(7),
                 ProcessedAt     = reader.IsDBNull(8) ? null : reader.GetDateTime(8),
-                SelectedParameters = reader.IsDBNull(9) ? null : reader.GetFieldValue<string[]>(9)
+                SelectedParameters = reader.IsDBNull(9) ? null : reader.GetFieldValue<string[]>(9),
+                Status          = reader.GetString(10)
             };
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to read latest completed calculation_request");
+            _logger.LogError(ex, "Failed to read calculation_request {Id}", requestId);
             throw;
         }
     }

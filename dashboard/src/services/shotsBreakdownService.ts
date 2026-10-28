@@ -1,17 +1,9 @@
 import type { ShotsBreakdownEntry } from '../types';
 
-import { API_BASE } from './apiBase';
-
-function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem('plc_gateway_token');
-  const isJwt = token && token.includes('.') && !token.startsWith('local-');
-  return {
-    ...(isJwt ? { Authorization: `Bearer ${token}` } : {}),
-  };
-}
+import { apiFetch } from './apiClient';
 
 export async function fetchShotsBreakdown(): Promise<ShotsBreakdownEntry[]> {
-  const res = await fetch(`${API_BASE}/api/shotsbreakdown`, { headers: authHeaders() });
+  const res = await apiFetch(`/api/shotsbreakdown`);
   if (!res.ok) throw new Error(`Shots breakdown fetch failed: ${res.status} ${res.statusText}`);
   return res.json() as Promise<ShotsBreakdownEntry[]>;
 }

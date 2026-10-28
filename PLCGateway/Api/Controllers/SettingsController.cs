@@ -10,60 +10,22 @@ namespace PlcApi.Controllers;
 public class SettingsController : ControllerBase
 {
     private readonly ImpellerSelection _impellers;
-    private readonly CalculationService _calculation;
-    private readonly ILogger<SettingsController> _logger;
 
-    public SettingsController(
-        ImpellerSelection impellers,
-        CalculationService calculation,
-        ILogger<SettingsController> logger)
+    public SettingsController(ImpellerSelection impellers)
     {
-        _impellers   = impellers;
-        _calculation = calculation;
-        _logger      = logger;
+        _impellers = impellers;
     }
 
     /// <summary>
-    /// The impellers every panel shows and every calculation counts, plus the most the machine
-    /// can have.
+    /// The impellers every panel shows and every calculation counts, the ones the tag file has, and
+    /// the most a machine can have. Read-only here: the selection is changed only from the cloud
+    /// (PUT /api/admin/settings/impellers, decided 2026-10-13).
     /// </summary>
     [HttpGet("impellers")]
-    public IActionResult GetImpellers() => Ok(Current());
-
-    /// <summary>
-    /// Saves a new selection for every viewer. Any signed-in user may change it (a site decision).
-    /// Recalculates the energy of every recorded cycle, the daily rollup and the lifetime totals
-    /// BEFORE returning, so a 200 means the new figures are already in place.
-    /// </summary>
-    [HttpPut("impellers")]
-    public async Task<IActionResult> SaveImpellers([FromBody] ImpellerSelectionDto request)
-    {
-        int[] selected;
-        try
-        {
-            selected = ImpellerSelection.Normalize(request.Selected ?? []);
-        }
-        catch (ArgumentException ex)
-        {
-            return BadRequest(new { error = ex.Message });
-        }
-
-        try
-        {
-            string? user = User.Identity?.Name ?? User.FindFirst("unique_name")?.Value;
-            await _calculation.ApplyImpellerSelectionAsync(selected, user);
-            return Ok(Current());
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to save the impeller selection");
-            return StatusCode(500, new { error = "Failed to save the impeller selection" });
-        }
-    }
-
-    private ImpellerSelectionDto Current() => new()
+    public IActionResult GetImpellers() => Ok(new ImpellerSelectionDto
     {
         Selected     = _impellers.Snapshot(),
+        Available    = _impellers.Available(),
         MaxImpellers = ImpellerSelection.MaxImpellers
-    };
+    });
 }

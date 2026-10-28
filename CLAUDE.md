@@ -6,7 +6,7 @@ Industry project. A single **unified ASP.NET Core (.NET 10) application** hosted
 
 **Stack:** .NET 10, C#, ASP.NET Core (WebApplication + hosted services), S7.NetPlus (PLC driver), Npgsql (PostgreSQL), JWT bearer auth. Frontend: Vite + React + TypeScript (built into `wwwroot`).
 
-**PLC:** Siemens S7-1200 at 192.168.0.180, Rack 0, Slot 1. Data Block DB60. ~443 tags (read as a batched byte region).
+**PLC:** Siemens S7-1200, Rack 0, Slot 1, read as batched byte regions. The address is per site (installer, then the cloud — see "The PLC address is set from the cloud") and so is the tag list (the cloud tag file). The original dev site: 192.168.0.180, DB60, ~443 tags. The tags in this repo's `appsettings.json` are now the IOT [DB600] block at 192.168.1.11 (100 tags, one impeller).
 
 **Database:** `sreesakthi_gateway` on localhost:5432, user=postgres, password=Pass
 
@@ -69,7 +69,7 @@ Industry project. A single **unified ASP.NET Core (.NET 10) application** hosted
 | `gateway_status`               | Backend                             | Single row — PLC connection state (`plc_connected`, `last_scan_at`)    |
 | `gateway_license_state`        | Backend                             | Single row — licence check state. `last_success_utc` (true UTC) + `last_success_url` = the grace anchor; `locked` mirrors the lock |
 | `gateway_settings`             | Backend (dashboard saves via API)   | Single row — `selected_impellers`: which impellers are shown AND counted in energy / spares. See "Impeller selection" |
-| `users`                        | Backend                             | Dashboard login accounts (local; no tenant/subscription)               |
+| `users`                        | Nothing (since 2026-10-26)          | The removed shared login's accounts. Kept, never dropped; nothing reads it |
 
 
 ---
@@ -90,7 +90,7 @@ Industry project. A single **unified ASP.NET Core (.NET 10) application** hosted
 | `LicenseCheckService`        | 60 min (5 min while locked) | Cloud licence check. 2xx = open; 401/402/403 = **lock at once**; no answer = open until 72 h after the last 2xx; empty `CheckUrl` = check off. Locks only the dashboard and its API — recording continues |
 | `CalculationService`         | shared lib | Math: `ComputeLifetimeParametersAsync` (incremental), `ComputeFilteredParametersAsync`      |
 | `PlcService`                 | —          | S7.NetPlus wrapper: batched `ReadRegion`; reserved `Write` for spares REPLACED write-back  |
-| API controllers + services   | HTTP       | `/api/*` JSON for the dashboard (JWT-protected); `/api/admin/*` cloud pulls (IP allowlist + API key) |
+| API controllers + services   | HTTP       | `/api/*` JSON for the dashboard (JWT-protected); `/api/admin/*` cloud pulls (API key only — see "Resolved client decisions") |
 
 
 ---
@@ -106,12 +106,12 @@ Industry project. A single **unified ASP.NET Core (.NET 10) application** hosted
 
 | `parameter_name`            | Formula                                                                             | Source tags                                            |
 | --------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| `machine_status`            | `value ≠ "0" → 1, else 0`                                                           | `Machine status` BYTE at `DB60.DBB0`, live from Tier 1 |
-| `machine_utility_pct`       | `blast_time_sec ÷ machine_on_time_sec × 100`                                        | `Blast ON/OFF`, `Machine status` from Tier 2           |
+| `machine_status`            | `value ≠ "0" → 1, else 0` — the machine is ON                                        | `Machine status`, live from Tier 1: BYTE `DB60.DBB0` (dev site); BOOL `DB600.DBX0.0`, the PLC's "running" bit, at the DB600 site |
+| `machine_utility_pct`       | `blast_time_sec ÷ machine_on_time_sec × 100` (blast time = the completed cycles, below) | `plc_cycles`, `Machine status` from Tier 2          |
 | `production_qty_kg`         | Latest raw `Tonnage` value                                                          | `Tonnage` from Tier 1 (PLC is running accumulator)     |
 | `energy_kwh_total`          | `Σ (avg_amps_per_impeller × cycle_duration_hours)` across the **selected** impellers (`gateway_settings`) × all cycles | `plc_cycles` + `Current_imp_N` from Tier 2 |
 | `energy_per_casting_kwh_kg` | `energy_kwh_total ÷ production_qty_kg`                                              | derived                                                |
-| `blast_time_sec`            | Total seconds where `Blast ON/OFF = true`                                           | `Blast ON/OFF` Tier 2                                  |
+| `blast_time_sec`            | `Σ plc_cycles.duration_sec` — the completed cycles' run times (since 2026-10-28; see "Blast time is the completed cycles") | `plc_cycles` |
 | `cycle_count`               | Rising edges `0→1` on `Blast ON/OFF`                                                | `Blast ON/OFF` Tier 2                                  |
 | `avg_shot_refill_time_sec`  | Elapsed time since first refill ÷ refill count                                      | `Refil shots weight` Tier 2                            |
 | `last_refill_epoch_sec`     | Unix epoch of latest `Refil shots weight` change                                    | `Refil shots weight` Tier 2                            |
@@ -164,6 +164,7 @@ Maintained by the incremental engine via upsert (no TRUNCATE), so the dashboard 
 | ------------------- | ----------------------------------------------------------------------------------- |
 | production          | **Reported per casting metal, not as a scalar.** `plc_filtered_metal_production` holds `Σ` declared `Casting metal N weight` grouped by metal name over the in-scope cycles. Not derived from `Tonnage` at all. |
 | `energy_kwh_total`  | `Σ plc_cycles.energy_kwh` over in-scope cycles                                       |
+| `blast_time_sec`    | `Σ plc_cycles.duration_sec` over in-scope cycles, in every filter mode — so a filter covering all history equals Section 1. It is also the `machine_utility_pct` numerator |
 | `energy_per_casting_kwh_kg` | `energy_kwh_total ÷ (total declared metal weight)` — same denominator as the per-metal table, so "per casting kg" means one thing in Section 2 |
 | `machine_status`    | Not included                                                                        |
 | `avg_shot_refill_time_sec`, `last_refill_epoch_sec`, `effective_shots_usage_kg_per_ton`, shots breakdown | Not included — Section 1 only, does not respond to any filter. (`production_qty_kg` IS in Section 2, with a different formula — see below) |
@@ -179,6 +180,7 @@ Maintained by the incremental engine via upsert (no TRUNCATE), so the dashboard 
 
 | Column          | Formula                                                    |
 | --------------- | ---------------------------------------------------------- |
+| `duration_sec`  | `plc_cycles.duration_sec`, copied at calculation time — the Cycle Breakdown's **"Ran for"** column (Excel: "Ran for (min)"), which adds up to Blast Time. Results calculated before 2026-10-28 have none; the API falls back to `blast_end − blast_start` |
 | `production_kg` | `tonnage_kg(this cycle) − tonnage_kg(prev cycle)`, floor 0. Shown as **"Tonnage Produced (kg)"** in the Cycle Log and Excel (was "Weight (kg)", which read as the sum of the declared item weights beside it) |
 | `energy_kwh`    | `avg_amps_all_impellers × cycle_duration_hours`            |
 
@@ -223,7 +225,7 @@ state), so it is filtered out of the grid itself.
 | `production_qty_kg` | All-time production: bars = produced per bucket, line = cumulative `Tonnage` | **Bar chart of declared weight per casting item** (`ItemProductionGraph`, from `plc_filtered_metal_production`). The scalar is the total of those bars — a different formula from Section 1's, by design |
 | `energy_kwh_total` | All-time energy per bucket, `/api/trends` | Per-cycle bars (`plc_filtered_cycle_data`) |
 | `energy_per_casting_kwh_kg` | **n/a — scalar only** | **n/a — scalar only.** kWh/kg drifts by thousandths across a bucket, so any axis fitted to it turns rounding into an apparent trend |
-| `blast_time_sec` | Blast hours per bucket, `/api/trends` (`blast_on_sec`) | Same chart over the filter window (time filter only) |
+| `blast_time_sec` | Blast hours per bucket, `/api/trends` (`blast_on_sec` = the cycles that ended in that bucket) | Same chart over the filter window (time filter only) |
 | `cycle_count` | Completed cycles per bucket, `/api/trends` (`cycle_count`) | Same chart over the filter window (time filter only) |
 | Amps tile (×10) | **Every recorded cycle, one point each** — that cycle's average current (`GET /api/amps/by-cycle`); 1 463 cycles in ~130 ms / 109 KB. The x-axis is CYCLE NUMBER, not time, so the trace does not return to zero between points and must not: nothing exists "between" cycle 960 and 961 to plot. The rise across the series is the blade-wear model. A per-sample view on 5/25/100-cycle ranges was built alongside this and **removed as redundant**; restoring it needs a time axis over a bounded window, since per-second detail across all cycles is ~178 000 samples per impeller. The tile headline is **always** the live Tier 1 reading, including 0 A between loads; while the impeller is not turning, the **last completed cycle's average** (`GET /api/amps/last-cycle`) is shown underneath as "ran at N A" | Same tile/dialog layout, driven by the FilterBar (all three modes, incl. custom range): tile shows a duration-weighted average current for the filter's cycles (`plc_filtered_amps_data`), dialog chart is one point per cycle (`AVG(value_num)` in that cycle's blast window) instead of raw per-second samples. **All cycles are plotted** — the old 200-cycle cap silently dropped ~1 250 of 1 448 while the tile beside it averaged every one |
 | "Blast Cycles per Refill Interval" | Bar chart of `plc_shots_breakdown` — one bar per refill, height = blast cycles until the next refill. Labels are **date only**; a clock time is added only to bars that share a date with another | **n/a — removed from Section 2.** A refill interval spans whatever cycles fall in it, mixing items, so no filter scopes it meaningfully. Section 1 only, above the filter bar |
@@ -304,7 +306,7 @@ their values are last-known and not advancing. Recording continues regardless.
 
 | Tag                                | Type   | Address      |
 | ---------------------------------- | ------ | ------------ |
-| `Machine status`                   | BYTE   | DB60.DBB0    |
+| `Machine status`                   | BYTE / BOOL | DB60.DBB0 (dev site); DB600.DBX0.0 "running" = machine on (DB600 site; DBX0.1 is "Machine status on", not used) |
 | `Blast ON/OFF`                     | BOOL   | —            |
 | `Tonnage`                          | DINT   | —            |
 | `Refil shots weight`               | DINT   | DB60.DBD2    |
@@ -364,7 +366,16 @@ Thresholds (spare_index 0–13, hours): 100, 300, 300, 600, 2000, 2000, 300, 200
 | `PLCGateway/ImpellerSelection.cs`          | In-memory impeller selection (loaded from `gateway_settings`), read by every impeller-aware service |
 | `PLCGateway/SecretConfig.cs`               | Reads secrets; a `REPLACE_WITH…` placeholder or a too-short key counts as NOT SET. Also `JwtSigningKey` — one signing key shared by `AuthController` and JwtBearer |
 | `PLCGateway/appsettings.Production.json`   | **Git-ignored, never published.** This install's secrets (`Jwt:Key`, `Admin:ApiKey`, `License:*`). Loaded when the app runs as Production |
-| `tools/Set-DashboardPassword.ps1`          | Changes a dashboard password: asks twice without showing it, stores only the hash |
+
+| `PLCGateway/Hosting/*.cs`                  | Installed-gateway plumbing: `GatewayPaths` (ProgramData settings/logs), `GatewayCli` (`--init-database`, `--migrate-only`, `--set-local-admin`), `DatabaseSetup` (create role+DB, run the embedded `migration.sql`), `FileLoggerProvider` |
+| `PLCGateway/Api/Services/LoginThrottle.cs` | Per-account sign-in lockout + `ClientAddress` (real visitor IP behind the tunnel) |
+| `PLCGateway/Api/Auth/GatewayAuth.cs`       | Sign-in: scheme selection, Firebase token rules (`FirebaseLogin`, clientId match), gateway-token rules, `NetworkOrigin` (plant network vs tunnel), JSON 401 reasons |
+| `dashboard/src/services/apiClient.ts`      | `apiFetch` — every signed-in API call: fresh token each time, 401/403 ends the session with the gateway's reason |
+| `installer/`                               | Inno Setup installer: `build.ps1` → `output/ShotSense-Gateway-Setup-<ver>.exe`; `ShotSenseGateway.iss` (wizard); `scripts/*.ps1` (install/upgrade/uninstall work). See `installer/README.md` |
+| `INSTALLATION-CODE.md`                     | The `SSG1.` code the cloud shows at client registration and the installer consumes |
+| `PLCGateway/Hosting/SiteProfile.cs`        | The client's tag file from the cloud: fetch at start, encrypted saved copy, applied as a settings layer |
+| `tools/Export-SiteProfile.ps1`             | Writes a client's tag file (the five tag sections only) from an appsettings.json, for uploading in the cloud |
+| `tools/New-InstallCode.ps1`                | Builds an installation code by hand (testing, or until the cloud generates them) |
 | `PLCGateway/TagParser.cs`                  | Parses tags from raw DB byte regions (S7 big-endian)                      |
 | `PLCGateway/AggregationService.cs`         | Section 1 incremental computation trigger (1 min)                         |
 | `PLCGateway/CalculationService.cs`         | Parameter math — incremental Section 1 + Section 2 (+ metal split)        |
@@ -376,7 +387,7 @@ Thresholds (spare_index 0–13, hours): 100, 300, 300, 600, 2000, 2000, 300, 200
 | `PLCGateway/PlcService.cs`                 | S7.NetPlus wrapper — `ReadRegion`, reserved `Write`                       |
 | `PLCGateway/CovDetectionService.cs`        | COV logic (relative/absolute deadband, state-change)                     |
 | `PLCGateway/Models/*.cs`                   | `PlcCycle`, `CalculationRequest`, `AggregationState`, `ScanWrites`, …     |
-| `PLCGateway/Api/Controllers/*.cs`          | Dashboard API + `AuthController` (JWT) + `AdminController` (cloud pulls: `live`, `trends`, `filter`, `filter/{id}/amps`, `amps/by-cycle`, `history`) + `TrendsController` (local dashboard's graph series, JWT-protected) + `SettingsController` (`GET/PUT /api/settings/impellers`) |
+| `PLCGateway/Api/Controllers/*.cs`          | Dashboard API + `AuthController` (JWT) + `AdminController` (cloud pulls: `live`, `trends`, `filter`, `filter/{id}`, `filter/{id}/amps`, `amps/by-cycle`, `history`, `tags` (the cloud's Tag check), `settings/plc`; the two cloud writes `PUT settings/impellers` and `PUT settings/plc`) + `FilterController` (`GET /api/filter/{id}` reopens a saved request) + `TrendsController` (local dashboard's graph series, JWT-protected) + `SettingsController` (`GET /api/settings/impellers`, read-only) |
 | `PLCGateway/Api/Services/*.cs`             | API data services (typed reads), `TrendsService` (all graph math, `bucket=auto`, gap-fill), `UserService`, `LicenseState` |
 | `dashboard/src/utils/trendBuckets.ts`      | Axis + tooltip label formatting per bucket (selection moved server-side)  |
 | `dashboard/src/utils/chartAxis.ts`         | Shared axis construction — strided ticks, rounded y-domains, axis titles  |
@@ -388,7 +399,6 @@ Thresholds (spare_index 0–13, hours): 100, 300, 300, 600, 2000, 2000, 300, 200
 | `dashboard/src/components/FilterBar.tsx`    | Filter mode tabs + per-parameter toggles (Select All / Clear All); stays usable while a filter is applied |
 | `dashboard/src/utils/usePlcConnection.ts`  | Shared PLC-link poll behind the amps + spares staleness banners            |
 | `dashboard/src/components/LicenseGate.tsx` | Swaps the dashboard for a lock screen while `GET /api/license` says locked; warns during the grace period |
-| `dashboard/src/components/ImpellerSelector.tsx` | Impeller number buttons + confirm dialog in the Live Impeller Current header. `services/settingsService.ts` fires `IMPELLER_SELECTION_CHANGED` after a save so the slow-polling panels reload at once |
 | `PLCGateway/Api/Middleware/*.cs`           | `AdminGuardMiddleware` (IP+key), `LicenseLockMiddleware` (402 when locked) |
 | `dashboard/`                               | **Dashboard source** (Vite + React + TS), vendored in-repo. `npm run build` emits into `PLCGateway/wwwroot` (same-origin). |
 | `PLCGateway/wwwroot/`                       | Built React dashboard (served same-origin) — generated from `dashboard/`   |
@@ -523,11 +533,25 @@ LIMIT 1`.**
 
 ## Impeller selection (`gateway_settings.selected_impellers`)
 
-Which impellers the site includes, picked with the number buttons in the **Live Impeller Current**
-header (`ImpellerSelector`). It replaced the expo-era `Impellers:Count` config key. The choice is
-**machine-wide** — saved on the gateway for every viewer and the cloud — and it is **not only a
-display filter: hidden impellers are left out of the calculations too.** Any signed-in user may
-change it (site decision, 2026-09-15).
+Which impellers the site includes. It replaced the expo-era `Impellers:Count` config key. The choice
+is **machine-wide** — saved on the gateway for every viewer and the cloud — and it is **not only a
+display filter: hidden impellers are left out of the calculations too.**
+
+**Chosen from the cloud only (decided 2026-10-13)**, by any cloud admin, with the number buttons in
+the cloud client page's Impeller Current header → `gatewayProxy` view `set-impellers` →
+`PUT /api/admin/settings/impellers`. The gateway dashboard has **no** buttons and no write endpoint
+(`GET /api/settings/impellers` is read-only); its panels pick a change up on their next poll. This
+reverses the 2026-09-15 "any signed-in user may change it" decision — a change from one phone was
+showing on every screen, which is what the site took for a shared filter.
+
+**Only impellers the tag file has (2026-10-26).** `ImpellerSelection` reads the tag names at startup:
+any `Current_imp_N`, `Spares_Runhour_impN[..]`, `Spares trigger impN[..]` or `REPLACED_N[..]` tag means
+the site has impeller N (`Available()`). Every reader gets `Snapshot()` = the saved choice limited to the
+available impellers, or all of them when that leaves nothing — so a one-impeller machine (the DB600 block)
+shows and counts impeller 1 only, with no step in the cloud, and the default `{1..10}` row needs no change.
+`PUT /api/admin/settings/impellers` refuses an impeller with no tags (400, naming the ones it has).
+`/live` and `GET /api/settings/impellers` return `available`; the cloud offers only those buttons, and none
+at all for a single impeller. Energy is unaffected: an impeller with no current tag contributed 0 anyway.
 
 | Reader | Effect |
 | ------ | ------ |
@@ -540,7 +564,7 @@ change it (site decision, 2026-09-15).
 | Dashboard | derives everything from what the API returns; `SpareHealthTable` builds its columns from the rows themselves |
 | `GatewayWorker` | **unaffected** — raw `Current_imp_1…10` are recorded for every impeller, always |
 
-**Saving recalculates all recorded energy.** `PUT /api/settings/impellers` →
+**Saving recalculates all recorded energy.** `PUT /api/admin/settings/impellers` →
 `CalculationService.ApplyImpellerSelectionAsync` → `DatabaseService.SaveImpellerSelectionAsync`,
 one transaction: `gateway_settings`, `plc_cycles.energy_kwh` for every cycle (re-read from Tier 2),
 `plc_daily_trends.energy_kwh` per day, and `plc_aggregation_state.energy_total`. The lifetime
@@ -555,7 +579,7 @@ the original stored figures exactly (verified cycle by cycle on a copy of the re
 - **Not routed through `RetryAsync`,** which logs and swallows a final failure — the dashboard must
   be told when a save did not happen. The in-memory selection is put back if the save fails.
 - **Section 2 results are snapshots.** A filter computed before a change keeps the old impeller set
-  until it is applied again; the confirm dialog says so.
+  until it is applied again; the cloud's confirm dialog says so.
 
 Both amps panels and the spare table are **width-capped and CENTRED**. The cap is what makes
 centring work at all: `1fr` tracks always fill their container, so two impellers would stretch to
@@ -570,13 +594,60 @@ back to left.**
 
 ---
 
+## The PLC address is set from the cloud (2026-10-26)
+
+The installer's PLC IP / rack / slot is only the starting value (`PLC:*` in the install's settings file).
+Cloud client page → **PLC** → `gatewayProxy` view `set-plc` → `PUT /api/admin/settings/plc`
+`{ ipAddress, rack, slot }`:
+
+- Saved in `gateway_settings.plc_ip / plc_rack / plc_slot` (NULL = use the settings file); a saved value
+  wins from then on, including at startup (Program.cs loads it before the scan loop starts).
+- Applied without a restart: `PlcService.RequestEndpoint` hands the address over, and `GatewayWorker`
+  switches between passes (`ApplyPendingEndpoint`), never mid-read and never from the HTTP thread. The PUT
+  waits up to ~10 s and answers `applied` + `connected`.
+- **Plant-network IPv4 only** (10/8, 172.16/12, 192.168/16) and rack 0–7 / slot 0–31 (`PlcEndpoint.Problem`):
+  an address set remotely must never point the gateway at the internet.
+- Works while the PLC is unreachable — the cloud reaches the gateway through the tunnel, not the PLC.
+- `GET /api/admin/settings/plc` reads it back with `source` (`installer` / `cloud`) and `connected`.
+
+## Tag check, in the cloud only (2026-10-26)
+
+Cloud client page → **Tag check** → `gatewayProxy` view `tags` → `GET /api/admin/tags`: every tag in the
+site's tag file, in the file's order, with its latest Tier 1 reading (`value` null = never read), the PLC
+address, link state and tag file version. It exists to compare against TIA Portal's online view when a tile
+reads 0 (a wrong address or type shows at once). **Never on the gateway dashboard**: the tag list is private
+to the office, so it is served only behind the admin API key.
+
+## Blast time is the completed cycles (2026-10-28)
+
+**`blast_time_sec` = the sum of the completed cycles' `duration_sec`** — Section 1, every Section 2 filter
+mode, and the daily graph (`plc_daily_trends.blast_on_sec` = the cycles that ENDED that day). Decided after
+the first client site showed ~24 h of Blast Time for 10 cycles of 3–6 minutes: the old figure was the raw
+`Blast ON/OFF` on-time, which also counted time the signal was left on outside a finished cycle and time the
+gateway was not recording. The Cycle Breakdown's "Ran for" column now adds up to it exactly.
+
+- **A cycle's `duration_sec` is recorded time only** (`CycleTrackingService`, `DatabaseService.GetRecordedSecondsAsync`):
+  the steps between consecutive `Blast ON/OFF` rows inside the run, each counted up to `max(300 s, 5 × heartbeat)`.
+  The tag is a heartbeat tag, so a recording gateway writes a row at least every 60 s; a longer step means the
+  laptop slept or was off, and is not run time. Verified on a synthetic 2 h 06 min blast with a 1 h 55 min hole:
+  960 s counted. If `Blast ON/OFF` is ever removed from `HeartbeatTags`, the rule switches itself off
+  (duration = end − start) — change-only rows cannot tell a gap from a long blast. Energy uses the same duration.
+  Cycles recorded before this keep their stored duration.
+- `machine_utility_pct` = blast time ÷ machine on-time (`Machine status` on), in Section 1, Section 2 and the graph.
+- `cycle_count` is unchanged (rising edges of `Blast ON/OFF`). `CalculationService.FoldBlast` still folds the raw
+  on-time into `plc_aggregation_state.blast_closed_sec`, which nothing shows any more.
+- **The daily rollup was rebuilt once** on upgrade: `gateway_settings.rollup_version` < `DatabaseService.RollupVersion`
+  (2) ⇒ clear `plc_daily_trends` and backfill at startup. It is derived data; nothing is lost.
+- Machine on-time (the utility denominator) still has **no** recording-gap guard in Section 1 — see Pending items.
+
 ## Running vs Loading vs Stopped
 
 `MachineStatusTile` shows three states, not two:
 
-- **Running** — blast on.
-- **Loading** — powered and reachable, not blasting: the plant is loading the next batch. A normal
-  state, and most of any shift. (Labelled "Idle" until 2026-09; only the wording changed.)
+- **Running** — the machine is on: `Machine status` ≠ 0. At the DB600 site that is the PLC's "running"
+  bit `DBX0.0`, which the site defines as "machine on" (decided 2026-10-28). The tile does **not** look at
+  blasting. (It was mapped to `DBX0.1` at first, which read Loading while the machine ran.)
+- **Loading** — reachable, `Machine status` 0. (Labelled "Idle" until 2026-09; only the wording changed.)
 - **Stopped** — the gateway cannot reach the PLC, so the zero is inferred rather than measured
   (the backend forces the value to 0 and flags the row stale).
 
@@ -596,9 +667,20 @@ Cloudflare quick tunnel — `DEPLOYMENT-NOTES.md` section 11).
   accepted as real keys. Now `Admin:ApiKey` missing, placeholder or under 32 characters ⇒ every
   `/api/admin/*` request is 403; `Jwt:Key` the same ⇒ a random key per run (logins work but do not
   survive a restart). The hard-coded fallback JWT key is gone. Both cases log a startup warning.
-- **Logins**: `tools/Set-DashboardPassword.ps1` changes a password. Hashes are still plain unsalted
-  SHA-256, and there is **no login-attempt limit** — offered and declined 2026-09-18. Revisit both
-  before the gateway gets a permanent public address.
+- **Logins (hardened 2026-10-04, once the gateway went public on a subdomain):**
+  - Hashes are **PBKDF2-HMAC-SHA256, 600 000 iterations, random salt**, stored as
+    `pbkdf2-sha256$<iter>$<salt>$<hash>` (`PasswordHasher`). Old unsalted SHA-256 hashes still verify
+    and are **replaced at that user's next sign-in**; an unknown username costs the same time as a
+    wrong password, so timing doesn't reveal real names.
+  - **Attempt limits**, both answering 429 with a message the login page shows as-is: 5 attempts a
+    minute per visitor IP (rate limiter policy `login`), and 10 failures lock that login name for
+    15 minutes (`LoginThrottle`, in memory). Behind the tunnel every request comes from 127.0.0.1, so
+    the IP is Cloudflare's `CF-Connecting-IP` — **trusted only on a loopback connection**, because
+    port 5200 can be open to the plant LAN, where anyone could send a made-up header.
+  - These rules were written for the shared login, **removed 2026-10-26**; today they guard only the
+    emergency local admin. See "Dashboard sign-in" below.
+  - **No default login.** The `Seed` block and the hard-coded `sreesakthi`/`sreesakthi` fallback are
+    gone. Minimum 12 characters wherever a password is set.
 - **Licence rules (settled 2026-09-18)**: 2xx = valid; 401/402/403 = lock at once; anything else =
   "unreachable", open until 72 h after the last 2xx; empty `CheckUrl` = check off, dashboard open,
   and it never moves the grace clock. The grace anchor is stored with its URL (`last_success_url`),
@@ -614,6 +696,131 @@ Cloudflare quick tunnel — `DEPLOYMENT-NOTES.md` section 11).
 
 ---
 
+## Dashboard sign-in: email accounts, office staff, local admin (2026-10-13, 2026-10-26)
+
+Three ways in, one `[Authorize]`. The default scheme `Gateway` (`Api/Auth/GatewayAuth.cs`) reads each
+bearer token's issuer to pick the check; controllers need nothing else. `/api/admin/*` is untouched —
+the cloud keeps its `X-Api-Key`.
+
+**The shared username/password login was REMOVED on 2026-10-26** (decided with the client's team: while
+it existed, people used the one shared account instead of their own email login). `POST /api/auth/login`
+is gone, every token it ever issued is refused ("The shared login has been removed…"), the login page
+has no link to it, the installer no longer creates it, and `--create-admin` / `--set-password` /
+`tools/Set-DashboardPassword.ps1` went with it. The `users` table is kept (never dropped) but nothing
+reads it. **Upgrading a site that still uses the shared login locks those people out until they have
+email accounts** — add them on the cloud's Users page first.
+
+| Login | Who | Token | Rules |
+| --- | --- | --- | --- |
+| **Email** (normal) | One Firebase account per person, created and managed by any cloud admin on the cloud's Users page | Firebase ID token, checked here against `https://securetoken.google.com/<Firebase:ProjectId>`, audience = project id (Google's keys, cached — no cloud call per request) | `clientId` claim must equal this gateway's `Firebase:ClientId` (empty ⇒ the `clientId` in `License:CheckUrl`); `role` claim `admin`/`viewer`. The dashboard calls `getIdToken()` before **every** API call (`services/apiClient.ts`). A disabled account stops within an hour (ID-token lifetime; the cloud also revokes refresh tokens) |
+| **Office staff** | ShotSense cloud admins (an `admins/{uid}` document), with their own cloud email | Firebase ID token carrying `cloudAdmin: true` | Accepted on **every** gateway as admin, whatever its client id; the top bar says "ShotSense". The claim is set by the cloud: `syncCloudAdminClaim` (Firestore trigger on `admins/{uid}`: set on create, removed + sessions revoked on delete) and `syncAdminClaims` (called by the cloud website when a signed-in admin's token lacks it — backfills admins made earlier) |
+| **Local admin** (emergency) | One account: `Auth:LocalAdmin:Username` (default `localadmin`) + `Auth:LocalAdmin:PasswordHash`. The **installer asks for the password** (its only password page) and writes the hash with `PLCGateway.exe --set-local-admin`; support can run the same command later (as administrator) and restart the service | Gateway-signed, claim `login=local-admin`, role admin | **Plant network only.** `NetworkOrigin`: any Cloudflare header (`CF-Connecting-IP`, `CF-Ray`, `CDN-Loop`, `CF-Visitor`) ⇒ came through the tunnel ⇒ refused; otherwise the connection must be loopback or a private address. From the tunnel `/api/auth/local-admin` answers 404 and `/api/auth/config` says `localAdmin: false`; a token obtained on the LAN is refused through the tunnel too |
+
+- `GET /api/auth/config` (anonymous): the public Firebase web identifiers (`Firebase:ProjectId/ApiKey/AuthDomain/AppId`
+  — public by design, same for every gateway, in `appsettings.json`), and which logins to offer.
+- `GET /api/auth/me`: name, email, role, login kind (`firebase` / `office` / `local-admin`). The dashboard asks
+  right after every sign-in, so a person from another client is refused at once with the gateway's own sentence
+  (`GatewayAuth.WriteChallengeAsync` answers 401 `{message}`; the login page shows it): "This email has not been
+  added for this site. Ask ShotSense to add it…". Any 401/403 on any call ends the session the same way.
+- **"Forgot password?" works for any account in the Firebase project**, so receiving the reset email does not
+  mean the email belongs to this site. That is how the 2026-10-26 report happened: a cloud admin's email was
+  tried on a site before office staff were accepted everywhere. A client's people must be added on the cloud's
+  Users page for that client (Firebase allows one account per email, so an office email cannot also be a
+  client user — and no longer needs to be).
+- **Nothing on the gateway is admin-only today** — impeller selection and the PLC address, the only settings,
+  are set from the cloud. The role is shown in the top bar.
+- The startup log says whether email sign-in and the local admin are on, and the email client id with where it
+  came from.
+
+## The client's tag file comes from the cloud (2026-10-13)
+
+Tags differ per client and must stay private to the office, so **the installer ships no tags**
+(`installer/build.ps1` strips `Tags`, `ScanIntervalMs`, `CovRules`, `DataCollection`,
+`MaintenanceThresholds` from the shipped `appsettings.json` and refuses to build if any remain).
+`PLCGateway/Hosting/SiteProfile.cs`:
+
+| When | What happens |
+| --- | --- |
+| Office | Make the file with `tools/Export-SiteProfile.ps1` (exactly those five sections) and upload it in the cloud: Clients → Edit → **Tag Settings File**. The cloud keeps only those sections, in `siteProfiles/{clientId}`, which **no browser can read**; the dialog shows only file name, tag count and date |
+| Every gateway start, before any service reads settings | `GET SiteProfile:Url` (the cloud's `siteProfile` function) with `X-License-Key`. Downloaded ⇒ used, and saved **AES-256-GCM encrypted** (key derived from `License:Key`) in `C:\ProgramData\ShotSense\site\site-profile.bin`. Cloud unreachable ⇒ the saved copy. Neither ⇒ log and exit 1; the service retries every minute |
+| While running | The hourly licence check returns `siteProfileVersion`. A different one ⇒ download, save, stop with exit code 1 ⇒ the service restarts on it (needs `sc failureflag 1`, which the installer sets) |
+| Dev PC | No `SiteProfile:Url` ⇒ the tags in `appsettings.json`, as always |
+
+- The profile is applied as one extra settings layer holding **only** the five sections, so it can never
+  change keys, the database or the licence address. Never logged except version + tag count; never served.
+- Settings files merge lists **by position**: tags left in a lower layer would be read too. The gateway
+  warns at startup if `appsettings.json` still has tags while a profile is in use.
+- Honest limit: an administrator of the client PC can read `License:Key` too, and the tags must be in
+  memory to read the PLC. This keeps them from ordinary users, the setup file and copies of the file.
+- The installer checks the cloud has the file **before** starting the gateway (`Assert-SiteProfile`), and on
+  an upgrade adds `SiteProfile:Url` + `Firebase:ClientId` to an older install's settings. The service
+  account gets Modify on `ProgramData\ShotSense\site` only.
+
+## Installation code comes from the cloud (2026-10-13)
+
+Clients → Edit → **Copy installation code** (`web/src/utils/installCode.ts` in the cloud repo), offered only
+while the dialog matches what is saved. It carries `siteProfileUrl` now, and the client's Cloudflare tunnel
+token, which the cloud stores with the client's keys (admins only). The wizard's code page is a large wrapping box
+(Ctrl+V or right-click → Paste; Inno's script cannot read the clipboard, so no Paste button); whitespace
+is ignored. Format: `INSTALLATION-CODE.md`.
+
+## Installed gateway (installer, 2026-10-04)
+
+The same exe runs three ways: `dotnet run` on the dev PC, under IIS, or as the **`ShotSenseGateway`
+Windows service** that the installer sets up (delayed auto-start, depends on `ShotSensePostgres`,
+restarts on failure, runs as the virtual account `NT SERVICE\ShotSenseGateway`, not LocalSystem).
+
+| Concern | Where it lives on an installed PC |
+| --- | --- |
+| Program files | `C:\Program Files\ShotSense Gateway\` (`app\`, `pgsql\`, `cloudflared\`, `scripts\`) |
+| Settings + secrets | `C:\ProgramData\ShotSense\appsettings.Production.json`, layered over `appsettings.json` by `GatewayPaths.AddInstallSettings` (under env vars and the command line). Admins + the service only |
+| Logs | `C:\ProgramData\ShotSense\logs\gateway-YYYYMMDD.log` (30 days) and `install-*.log` |
+| Database | private PostgreSQL 18 in `C:\ProgramData\ShotSense\pgdata`, localhost only, port 5432 or 5433+ when the PC already has one. Superuser password in `db-admin.json` (admins only) |
+
+- **The gateway migrates its own schema on every start** (`Database:AutoMigrate`, default true;
+  `migration.sql` is embedded). It retries while PostgreSQL is still starting, then exits 1 so the
+  service restarts. Run `migration.sql` by hand only if AutoMigrate is turned off.
+- **The canonical connection string key is `ConnectionStrings:PostgresDb`.** `PostgreSQL:ConnectionString`
+  is only a fallback (the installer writes both). The startup log names the database it uses — added
+  after a test run landed on the wrong database without anyone noticing.
+- The installer **blanks the development connection strings** in the `appsettings.json` it ships, so a
+  broken install stops with a clear error instead of connecting somewhere else.
+- **Uninstall never deletes data**: services, firewall rule and program files go, `ProgramData\ShotSense`
+  stays, and installing again ("Restore") picks it up.
+- **Not code-signed yet** (decided 2026-10-04): expect the SmartScreen warning until a certificate is bought, before shipping.
+- **Dropped (2026-10-12):** the planned "change password" page. Dashboard logins move to Firebase
+  Authentication, whose reset email replaces it.
+
+## Filters are per tab (2026-10-12)
+
+Two people filtering at once must never change each other's dashboard. Rules:
+
+- **The applied filter lives in the browser tab only**: React state plus the tab's URL
+  (`dashboard/src/utils/filterUrl.ts`). For example `?filter=time&period=day&start=…&end=…&params=…&result=124`.
+  `filter=item` in the URL (the API still says `metal`). `params` left out = all toggles.
+- **`result` is the `calculation_requests` id.** On page open, `MachineDashboard` reopens it with
+  `GET /api/filter/{id}` and loads the saved result — **never recomputes** (the "nothing is calculated
+  until Apply" rule holds). The server's copy of the request wins over the rest of the URL; the URL's
+  filter only refills the bar when the id is gone (404). The URL is written as soon as the request is
+  created, so a refresh mid-calculation resumes polling it.
+- **Nothing on the server holds "the current" or "the latest" filter.** Each Apply is its own
+  `calculation_requests` row, read back only by id. The DB stays the Section 2 message bus.
+  `/api/admin/live` **no longer carries `section2`** (it was the latest filter from anyone, which leaked
+  one viewer's filter onto every other screen); the cloud uses its own `POST /api/admin/filter` response
+  and `GET /api/admin/filter/{id}`. Contract: `CONTRACT-admin-api.md`, "Changes on 2026-10-12";
+  prompt for the cloud: `CLOUD-FILTER-PROMPT.md`.
+- **A result id only opens for a signed-in user**: `/api/filter/*` is `[Authorize]`. An expired sign-in
+  signs out; `ProtectedRoute` passes the link (path + query) to the login page, which returns there
+  (internal paths only).
+- **Times from `GET /api/filter/{id}` carry the gateway's offset** (`+05:30`): they are stored as plant
+  wall-clock time, and a browser in another zone would otherwise misread them.
+- Impeller selection is **not** a filter: it stays machine-wide by design, and is set only from the
+  cloud (see "Impeller selection").
+- **Open question — no cleanup.** Nothing ever deletes old `calculation_requests` rows or their
+  `plc_filtered_*` results; they grow with every Apply (one row per cycle in scope, plus cycles ×
+  impellers amps rows). Deliberately not addressed yet (2026-10-12): decide a retention rule first.
+  Note that a reopened link whose result was deleted falls back to "apply it again".
+
 ## Resolved client decisions (do not reopen without the client)
 
 - **Energy formula — settled.** The client confirmed the PLC delivers energy as a correct value, so **no conversion formula is applied**. `energy_kwh_total` and per-cycle `energy_kwh` stay as `Σ(avg_amps × duration_hours)`. The unused `EnergyCalculation` config block (SupplyVoltageV / PowerFactor / ActiveImpellerCount) was **removed** — it was referenced by no code.
@@ -625,11 +832,11 @@ Cloudflare quick tunnel — `DEPLOYMENT-NOTES.md` section 11).
 
 ## Pending items
 
-- ~~Cloud `/api/admin/*` contract needs a broader pass~~ — **done.** `AdminController` now exposes three endpoints: `GET /api/admin/live` (extended: `section2.metals[]` added), `GET /api/admin/trends` (new — whole-history graph series, same rollup logic as the local `/api/trends`, behind `AdminGuardMiddleware` instead of JWT), `POST /api/admin/filter` (new — synchronous cloud-triggered Section 2 calculation, no `calculation_requests` polling wait). `CONTRACT-admin-api.md` and `sample-response.json` are current as of this pass. The metal-filter latency number in that doc is a structural argument, not a measured one — this repo's dev DB only has 5 cycles, too small to stress-test; re-benchmark before the cloud finalizes a hard timeout.
+- ~~Cloud `/api/admin/*` contract needs a broader pass~~ — **done.** `AdminController` now exposes three endpoints: `GET /api/admin/live` (Section 1 only — `section2` was **removed 2026-10-12**, see "Filters are per tab"), `GET /api/admin/trends` (new — whole-history graph series, same rollup logic as the local `/api/trends`, behind `AdminGuardMiddleware` instead of JWT), `POST /api/admin/filter` (new — synchronous cloud-triggered Section 2 calculation, no `calculation_requests` polling wait). `CONTRACT-admin-api.md` and `sample-response.json` are current as of this pass. The metal-filter latency number in that doc is a structural argument, not a measured one — this repo's dev DB only has 5 cycles, too small to stress-test; re-benchmark before the cloud finalizes a hard timeout.
 - **Commissioning `Tonnage` baseline for `effective_shots_usage_kg_per_ton`** — investigated, **deliberately not built**. `production_qty_kg` is the PLC's own lifetime accumulator while `total_refill_weight_kg` only accumulates from gateway commissioning, so on a gateway retrofitted to a running machine the ratio under-reports shot consumption (converging as history grows). A fix means storing `baseline_tonnage_kg` + `baseline_tonnage_set` in `plc_aggregation_state`, seeding from the earliest Tier 2 `Tonnage` row, and clearing both on `--rebuild-aggregation`. **The client decided `production_qty_kg` stays as raw `Tonnage`.** Applying a baseline to only the usage denominator would leave the two tiles mutually inconsistent — settle that with the client before building it. Full write-up in README, "Effective Shots Usage".
 - **`plc_historical_data` partitioning** — recommended within a couple of years (monthly declarative partitioning, retains every row). See README "Scaling".
 - **1 Hz `BLAST_ON` current logging** — `GatewayWorker` writes 10 impeller-current rows *per second* while blast is ON, which is 60–80% of all Tier 2 rows. Coarsening it to 5–10 s would cut storage 5–10× with negligible effect on cycle-average energy, but would coarsen the per-cycle `AmpsGraph` trace. Client decision, unchanged.
-- **Recording gaps inflate the Section 1 lifetime scalars.** `FoldBlast`/`FoldMachine` in `CalculationService` accumulate the full span between consecutive events with no cap, so a multi-week gateway outage is counted as runtime. The `plc_daily_trends` rollup **does** guard against this (segments over 5 min are treated as gaps), which is why a graph bucket and the lifetime scalar can disagree after an outage. The scalar was left alone deliberately — changing it would silently move a long-standing headline number. Decide with the client before touching it.
+- **Recording gaps inflate the Section 1 machine on-time.** (Blast time no longer: since 2026-10-28 it is the completed cycles, which leave gaps out.) `FoldMachine` in `CalculationService` accumulates the full span between consecutive events with no cap, so a laptop asleep with the machine on counts as machine on-time and lowers utility. The `plc_daily_trends` rollup **does** guard against this (segments over 5 min are treated as gaps), which is why a graph bucket and the lifetime scalar can disagree after an outage. The scalar was left alone deliberately — changing it would silently move a long-standing headline number. Decide with the client before touching it.
 - **`plc_historical_data` carries more redundant indexes.** Beyond the `idx_historical_name_time` dropped in this pass, `idx_historical_parameter` (`parameter_name`) is a prefix of `idx_historical_name_num`, and `idx_historical_address` is a prefix of `idx_historical_address_timestamp` — 7 indexes total on the hottest write path. Dropping the two prefixes is a further easy write-cost win; not done here because it was outside the agreed scope.
 
 ---
@@ -646,5 +853,6 @@ Safe to re-run on existing databases — all statements are idempotent (typed-co
 
 ## How to run / deploy
 
-- **Local:** `dotnet run --project PLCGateway` (serves API + dashboard on the Kestrel port). `--rebuild-aggregation` resets Section 1 incremental state and replays history.
-- **Production:** publish and host under IIS — see `DEPLOYMENT-NOTES.md`. App pool must be AlwaysRunning / Idle 0 / Preload so the PLC scan loop is never idled.
+- **Local:** `cd PLCGateway; dotnet run --no-launch-profile -- --urls http://localhost:5200` (serves API + dashboard). Put `--urls` FIRST: a bare flag before it swallows the next value. `--rebuild-aggregation` resets Section 1 incremental state and replays history. Sign in with an email account from the cloud, or set a local admin: `dotnet run --project PLCGateway -- --set-local-admin` (prints the hash for `appsettings.Production.json` on a dev PC).
+- **Client PCs: the installer** (`installer/README.md`). Windows services instead of IIS, a private bundled PostgreSQL, settings in `C:\ProgramData\ShotSense`, the Cloudflare tunnel instead of a certificate and port forward. See "Installed gateway" above.
+- **IIS** (`DEPLOYMENT-NOTES.md`) still works but is no longer the client path. App pool must be AlwaysRunning / Idle 0 / Preload so the PLC scan loop is never idled.

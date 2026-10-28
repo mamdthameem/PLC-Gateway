@@ -96,7 +96,7 @@ The data comes from `GET /api/admin/trends?bucket=auto` with no `start`/`end`, w
 - The Y axis starts at 0 with round steps; counts get whole-number ticks (never 0.75).
 - Plot every point and never truncate.
 - Label every point when the labels fit; otherwise label every Nth point at a fixed interval.
-- Straight lines between points, never smoothed or monotone curves.
+- Lines use Recharts `type="monotone"`, exactly as the gateway does. Monotone interpolation never overshoots between points. Never use `natural`, `basis` or `cardinal` curves: those swing past the data, which is how the old Cycle Breakdown chart dipped below zero.
 - No target or reference lines.
 - Charts open in a wide dialog, about 1,200 px wide and 420 px tall.
 

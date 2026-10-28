@@ -1,15 +1,9 @@
 import type { LatestCycle, CycleAmp } from '../types';
 
-import { API_BASE } from './apiBase';
-
-function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem('plc_gateway_token');
-  const isJwt = token && token.includes('.') && !token.startsWith('local-');
-  return { ...(isJwt ? { Authorization: `Bearer ${token}` } : {}) };
-}
+import { apiFetch } from './apiClient';
 
 export async function fetchLatestCycle(): Promise<LatestCycle | null> {
-  const res = await fetch(`${API_BASE}/api/cycles/latest`, { headers: authHeaders() });
+  const res = await apiFetch(`/api/cycles/latest`);
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`Cycles fetch failed: ${res.status}`);
   return res.json() as Promise<LatestCycle>;
@@ -24,7 +18,7 @@ export async function fetchLatestCycle(): Promise<LatestCycle | null> {
  * stays on the bounded ranges.
  */
 export async function fetchPerCycleAmps(impeller: number): Promise<CycleAmp[]> {
-  const res = await fetch(`${API_BASE}/api/amps/by-cycle?impeller=${impeller}`, { headers: authHeaders() });
+  const res = await apiFetch(`/api/amps/by-cycle?impeller=${impeller}`);
   if (!res.ok) throw new Error(`Per-cycle amps fetch failed: ${res.status}`);
   return res.json() as Promise<CycleAmp[]>;
 }

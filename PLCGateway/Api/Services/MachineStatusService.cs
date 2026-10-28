@@ -24,13 +24,16 @@ public class MachineStatusService : IMachineStatusService
 
             // Join the single gateway_status row so the dashboard sees the live PLC link state
             // alongside the machine value. When disconnected, the value is a forced 0 and stale.
+            // Looked up by tag NAME, not address: each client's PLC keeps it somewhere else (DB60.DBB0
+            // as a byte, DB600.DBX0.1 as a bit), and the newest row wins over one a moved block left.
             string sql = $@"
                 SELECT {SqlExpressions.TypedValue("cv")},
                        cv.last_updated, cv.is_stale,
                        COALESCE(gs.plc_connected, FALSE), gs.last_scan_at
                 FROM plc_current_values cv
                 LEFT JOIN gateway_status gs ON gs.id = 1
-                WHERE cv.address = 'DB60.DBB0'
+                WHERE cv.parameter_name = 'Machine status'
+                ORDER BY cv.last_updated DESC NULLS LAST
                 LIMIT 1;";
 
             await using var cmd    = new NpgsqlCommand(sql, conn);

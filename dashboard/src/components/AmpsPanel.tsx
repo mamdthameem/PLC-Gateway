@@ -7,8 +7,6 @@ import BarChartIcon from '@mui/icons-material/BarChart';
 import CloseIcon from '@mui/icons-material/Close';
 import { fetchAmpReadings, fetchLastCycleAmps } from '../services/ampsService';
 import AmpsGraph from './AmpsGraph';
-import ImpellerSelector from './ImpellerSelector';
-import { IMPELLER_SELECTION_CHANGED } from '../services/settingsService';
 import { usePlcConnection } from '../utils/usePlcConnection';
 import { formatStamp } from '../utils/formatters';
 import type { AmpReading } from '../types';
@@ -56,12 +54,9 @@ export default function AmpsPanel() {
     }
     load();
     const id = setInterval(load, POLL_MS);
-    // A saved impeller selection changes which tiles exist; reload now rather than on the next tick.
-    window.addEventListener(IMPELLER_SELECTION_CHANGED, load);
     return () => {
       active = false;
       clearInterval(id);
-      window.removeEventListener(IMPELLER_SELECTION_CHANGED, load);
     };
   }, []);
 
@@ -86,11 +81,9 @@ export default function AmpsPanel() {
     }
     load();
     const id = setInterval(load, LAST_CYCLE_POLL_MS);
-    window.addEventListener(IMPELLER_SELECTION_CHANGED, load);
     return () => {
       active = false;
       clearInterval(id);
-      window.removeEventListener(IMPELLER_SELECTION_CHANGED, load);
     };
   }, []);
 
@@ -99,18 +92,25 @@ export default function AmpsPanel() {
 
   const cols = readings.length;
 
+  // No current reading for any impeller in use: the site's tag file has no Current_imp_N tag (a PLC
+  // that does not measure impeller current yet). Say so instead of leaving an empty heading.
+  if (cols === 0) {
+    return (
+      <Box>
+        <Typography variant="h6" sx={{ mb: 1 }}>Impeller Current</Typography>
+        <Alert severity="info" sx={{ py: 0.25 }}>
+          No impeller current readings for this machine yet. Energy figures need them.
+        </Alert>
+      </Box>
+    );
+  }
+
   return (
     <Box>
-      {/* The selector sits here, but the choice is machine-wide: it decides which impellers every
-          panel shows and which ones energy and spare monitoring count. */}
-      <Box
-        sx={{
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          flexWrap: 'wrap', gap: 1, mb: connected ? 2 : 0.5,
-        }}
-      >
+      {/* Only the selected impellers have tiles. The selection is machine-wide and is chosen from
+          the cloud (PUT /api/admin/settings/impellers); this dashboard cannot change it. */}
+      <Box sx={{ mb: connected ? 2 : 0.5 }}>
         <Typography variant="h6">Impeller Current</Typography>
-        <ImpellerSelector />
       </Box>
 
       {!connected && (

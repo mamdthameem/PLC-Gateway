@@ -1,12 +1,6 @@
 import type { HistoricalPoint } from '../types';
 
-import { API_BASE } from './apiBase';
-
-function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem('plc_gateway_token');
-  const isJwt = token && token.includes('.') && !token.startsWith('local-');
-  return { ...(isJwt ? { Authorization: `Bearer ${token}` } : {}) };
-}
+import { apiFetch } from './apiClient';
 
 export async function fetchHistorical(
   parameterName: string,
@@ -18,7 +12,7 @@ export async function fetchHistorical(
     start: start.toISOString(),
     end:   end.toISOString(),
   });
-  const res = await fetch(`${API_BASE}/api/historical?${params}`, { headers: authHeaders() });
+  const res = await apiFetch(`/api/historical?${params}`);
   if (!res.ok) throw new Error(`Historical fetch failed for ${parameterName}: ${res.status}`);
   return res.json() as Promise<HistoricalPoint[]>;
 }

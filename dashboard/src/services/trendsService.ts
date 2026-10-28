@@ -1,12 +1,6 @@
 import type { DailyTrend, TrendBucket } from '../types';
 
-import { API_BASE } from './apiBase';
-
-function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem('plc_gateway_token');
-  const isJwt = token && token.includes('.') && !token.startsWith('local-');
-  return { ...(isJwt ? { Authorization: `Bearer ${token}` } : {}) };
-}
+import { apiFetch } from './apiClient';
 
 export interface TrendSeries {
   /** The granularity the server actually used — the axis is titled from this. */
@@ -39,7 +33,7 @@ export async function fetchTrends(
   if (start) params.set('start', start.toISOString());
   if (end)   params.set('end',   end.toISOString());
 
-  const res = await fetch(`${API_BASE}/api/trends?${params}`, { headers: authHeaders() });
+  const res = await apiFetch(`/api/trends?${params}`);
   if (!res.ok) throw new Error(`Trends fetch failed: ${res.status} ${res.statusText}`);
 
   const rows = (await res.json()) as DailyTrend[];

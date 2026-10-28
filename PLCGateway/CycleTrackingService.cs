@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -34,10 +35,22 @@ public class CycleTrackingService : BackgroundService
 
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(2);
 
-    public CycleTrackingService(ILogger<CycleTrackingService> logger, DatabaseService db)
+    // A cycle's duration counts only the time the gateway was recording (decided 2026-10-28): if the
+    // laptop slept for an hour in the middle of a blast, that hour is not run time. "Blast ON/OFF" is a
+    // heartbeat tag, so a recording gateway writes a row for it at least every heartbeat; a longer step
+    // between rows is a recording gap, of which only MaxStepSeconds counts (same rule and figure as the
+    // daily rollup's MaxOnSegmentSeconds). Null when the tag is not a heartbeat tag: then the rows are
+    // change-only, gaps cannot be told from a long blast, and the duration is simply end − start.
+    private readonly double? _maxStepSeconds;
+
+    public CycleTrackingService(ILogger<CycleTrackingService> logger, DatabaseService db, IConfiguration config)
     {
         _logger = logger;
         _db     = db;
+
+        var heartbeatTags = config.GetSection("DataCollection:HeartbeatTags").Get<string[]>() ?? Array.Empty<string>();
+        int heartbeatSec  = config.GetValue<int?>("DataCollection:PeriodicHeartbeatSeconds") ?? 60;
+        _maxStepSeconds   = heartbeatTags.Contains(TAG_BLAST) ? Math.Max(300, 5 * heartbeatSec) : null;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -72,7 +85,14 @@ public class CycleTrackingService : BackgroundService
                         continue;
                     }
 
-                    double durationSec = (blastEnd - blastStart.Value).TotalSeconds;
+                    double spanSec     = (blastEnd - blastStart.Value).TotalSeconds;
+                    double durationSec = _maxStepSeconds is { } maxStep
+                        ? await _db.GetRecordedSecondsAsync(TAG_BLAST, blastStart.Value, blastEnd, maxStep)
+                        : spanSec;
+                    if (spanSec - durationSec > 1)
+                        _logger.LogWarning(
+                            "Cycle ending {end}: {gap:F0} s of its {span:F0} s span was not recorded (gateway asleep or off); counted {sec:F0} s.",
+                            blastEnd, spanSec - durationSec, spanSec, durationSec);
 
                     // Read casting metal names and weights from Tier 1 (current values at cycle end)
                     string?[] metalNames   = new string?[4];

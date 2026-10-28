@@ -1,12 +1,16 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { Box, Container, Divider } from '@mui/material';
+import { useSearchParams } from 'react-router-dom';
+import { Alert, Box, CircularProgress, Container, Divider } from '@mui/material';
 import FilterBar, { type FilterCalcState } from './FilterBar';
 import MachineStatusTile from './MachineStatusTile';
 import { LifetimeSection } from './LifetimeSection';
 import AmpsPanel from './AmpsPanel';
 import SpareHealthTable from './SpareHealthTable';
 import FilterResultsView from './FilterResultsView';
-import { submitFilterRequest, pollFilterStatus } from '../services/filterService';
+import {
+  submitFilterRequest, pollFilterStatus, fetchFilterRequest, FilterRequestError,
+} from '../services/filterService';
+import { filterToSearchParams, filterFromSearchParams, requestFromInfo } from '../utils/filterUrl';
 import {
   SECTION1_ONLY_PARAM_KEYS, SHARED_PARAM_KEYS,
   type FilterRequest, type Section2ParamKey,
@@ -70,10 +74,33 @@ function filterLabel(req: FilterRequest): string {
  * a calculation_requests row, so firing one on page load would charge every visitor for a
  * calculation nobody asked for.
  */
+function appliedFrom(requestId: number, req: FilterRequest): AppliedContext {
+  return {
+    requestId,
+    label:       filterLabel(req),
+    filterStart: req.filterStart,
+    filterEnd:   req.filterEnd,
+    filterBy:    req.filterBy,
+    itemName:    req.filterBy === 'metal' ? (req.filterMetalName ?? null) : null,
+    selectedParameters: req.selectedParameters ?? [],
+  };
+}
+
 export const MachineDashboard: React.FC = () => {
+  // The applied filter lives in THIS tab only: React state plus this tab's URL. Nothing about it is
+  // kept on the server except the saved calculation itself, which is looked up by its own id - so
+  // two people filtering at the same time cannot change each other's dashboard.
+  const [searchParams, setSearchParams] = useSearchParams();
   const [calcState, setCalcState] = useState<FilterCalcState>('idle');
   const [applied, setApplied]     = useState<AppliedContext | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // What the filter bar starts from: the filter in the URL (refined once the saved request is
+  // loaded), else the defaults. A new key re-creates the bar so it picks up the reopened filter.
+  const [barInitial, setBarInitial] = useState<FilterRequest | null>(() => filterFromSearchParams(searchParams).request);
+  const [barKey, setBarKey]         = useState(0);
+  const [restoring, setRestoring]   = useState(() => filterFromSearchParams(searchParams).resultId !== null);
+  const [restoreNote, setRestoreNote] = useState<string | null>(null);
 
   const stopPoll = () => {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
@@ -82,47 +109,95 @@ export const MachineDashboard: React.FC = () => {
   // Stop polling if the page is left mid-calculation.
   useEffect(() => stopPoll, []);
 
-  const handleApply = useCallback(async (req: FilterRequest) => {
+  const startPolling = useCallback((requestId: number, req: FilterRequest) => {
     stopPoll();
-    setCalcState('submitting');
-    try {
-      const requestId = await submitFilterRequest(req);
-      setCalcState('polling');
-
-      pollRef.current = setInterval(async () => {
-        try {
-          const status = await pollFilterStatus(requestId);
-          if (status.status === 'done') {
-            stopPoll();
-            setApplied({
-              requestId,
-              label:       filterLabel(req),
-              filterStart: req.filterStart,
-              filterEnd:   req.filterEnd,
-              filterBy:    req.filterBy,
-              itemName:    req.filterBy === 'metal' ? (req.filterMetalName ?? null) : null,
-              selectedParameters: req.selectedParameters ?? [],
-            });
-            setCalcState('done');
-          } else if (status.status === 'error') {
-            stopPoll();
-            setCalcState('error');
-          }
-        } catch {
+    setCalcState('polling');
+    pollRef.current = setInterval(async () => {
+      try {
+        const status = await pollFilterStatus(requestId);
+        if (status.status === 'done') {
+          stopPoll();
+          setApplied(appliedFrom(requestId, req));
+          setCalcState('done');
+        } else if (status.status === 'error') {
           stopPoll();
           setCalcState('error');
         }
-      }, 2500);
+      } catch {
+        stopPoll();
+        setCalcState('error');
+      }
+    }, 2500);
+  }, []);
+
+  const handleApply = useCallback(async (req: FilterRequest) => {
+    stopPoll();
+    setRestoreNote(null);
+    setCalcState('submitting');
+    try {
+      const requestId = await submitFilterRequest(req);
+      // The URL names the result from the moment it exists, so a refresh - even mid-calculation -
+      // picks the same calculation up again instead of starting a new one. Replace, not push: the
+      // Back button keeps meaning "leave the dashboard", as it did before.
+      setSearchParams(filterToSearchParams(req, requestId), { replace: true });
+      startPolling(requestId, req);
     } catch {
       setCalcState('error');
     }
-  }, []);
+  }, [setSearchParams, startPolling]);
 
   // Clearing drops back to the Section 1 view of the same tiles — no calculation involved.
   const handleClear = useCallback(() => {
     stopPoll();
     setCalcState('idle');
     setApplied(null);
+    setRestoreNote(null);
+    setSearchParams({}, { replace: true });
+  }, [setSearchParams]);
+
+  // Reopen the result named in the URL, once, when the page opens. It is LOADED by id, never
+  // recomputed: nothing is calculated until Apply is pressed. The lookup needs a signed-in user;
+  // an expired sign-in signs out, and the login page brings the user back to this same link.
+  useEffect(() => {
+    const { request: fromUrl, resultId } = filterFromSearchParams(searchParams);
+    if (resultId === null) return;
+    let active = true;
+
+    fetchFilterRequest(resultId)
+      .then(info => {
+        if (!active) return;
+        const req = requestFromInfo(info);   // the server's copy wins over what the URL says
+        setBarInitial(req);
+        setBarKey(k => k + 1);
+        if (info.status === 'done') {
+          setApplied(appliedFrom(resultId, req));
+          setCalcState('done');
+        } else if (info.status === 'error') {
+          setCalcState('error');
+        } else {
+          startPolling(resultId, req);
+        }
+      })
+      .catch(e => {
+        if (!active) return;
+        // A refused sign-in has already ended the session (apiFetch), and the login page brings
+        // the user back to this same link.
+        if (e instanceof FilterRequestError && (e.status === 401 || e.status === 403)) return;
+        // Gone or unreadable: keep the filter in the bar so it can be applied again, drop the id.
+        setRestoreNote(e instanceof FilterRequestError && e.status === 404
+          ? 'The saved result in this link no longer exists. Its filter is filled in below: press Apply Filter to calculate it again.'
+          : 'The saved result in this link could not be loaded. Press Apply Filter to calculate it again.');
+        setBarInitial(fromUrl);
+        setBarKey(k => k + 1);
+        const rest = new URLSearchParams(searchParams);
+        rest.delete('result');
+        setSearchParams(rest, { replace: true });
+      })
+      .finally(() => { if (active) setRestoring(false); });
+
+    return () => { active = false; };
+    // Deliberately once, on open: later URL changes are the page's own writes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const showSection2 = calcState === 'done' && applied !== null;
@@ -158,14 +233,20 @@ export const MachineDashboard: React.FC = () => {
 
       {/* ══════════ FILTER BAR ══════════ */}
       <FilterBar
+        key={barKey}
+        initial={barInitial}
         calcState={calcState}
         appliedContext={applied}
         onApply={handleApply}
         onClear={handleClear}
       />
 
+      {restoreNote && <Alert severity="info" sx={{ mb: 2 }}>{restoreNote}</Alert>}
+
       {/* ══════════ SHARED PARAMETERS — Section 1 live, or Section 2 once filtered ══════════ */}
-      {showSection2 ? (
+      {restoring ? (
+        <Box display="flex" justifyContent="center" py={6}><CircularProgress /></Box>
+      ) : showSection2 ? (
         <FilterResultsView
           requestId={applied!.requestId}
           filterStart={applied!.filterStart}

@@ -14,8 +14,8 @@ public static class TagParser
 {
     public const int DefaultStringMaxLen = 254; // S7 STRING default: 2-byte header + up to 254 chars
 
-    // Parses "DB60.DBX1.1" -> (60, 1, 1); "DB60.DBB0" -> (60, 0, 0); "DB60.DBD1650" -> (60, 1650, 0).
-    // Handles DBB (byte), DBX (bit), DBW (word), DBD (dword) prefixes.
+    // Parses "DB600.DBX2.1" -> (600, 2, 1); "DB600.DBB8" -> (600, 8, 0); "DB600.DBD2152" -> (600, 2152, 0).
+    // Handles DBB (byte), DBX (bit), DBW (word), DBD (dword) prefixes. Any DB number works.
     public static (int Db, int ByteOffset, int Bit) ParseAddress(string address)
     {
         if (string.IsNullOrWhiteSpace(address))
@@ -48,7 +48,7 @@ public static class TagParser
             case "BOOL": case "BOOLEAN":
             case "BYTE": case "SINT": case "USINT":
                 return 1;
-            case "INT": case "WORD":
+            case "INT": case "WORD": case "UINT":
                 return 2;
             case "DINT": case "DWORD": case "REAL": case "UDINT":
                 return 4;
@@ -89,7 +89,7 @@ public static class TagParser
                 RequireBytes(region, o, 2, byteOffset, type);
                 return ((short)((region[o] << 8) | region[o + 1])).ToString(CultureInfo.InvariantCulture);
 
-            case "WORD":
+            case "WORD": case "UINT":
                 RequireBytes(region, o, 2, byteOffset, type);
                 return ((ushort)((region[o] << 8) | region[o + 1])).ToString(CultureInfo.InvariantCulture);
 

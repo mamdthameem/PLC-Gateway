@@ -5,6 +5,7 @@ import {
 } from '@mui/material';
 import FilterAltOffIcon from '@mui/icons-material/FilterAltOff';
 import { PARAM_META } from '../utils/unitConverters';
+import { PERIODS, toLocalInputValue } from '../utils/filterUrl';
 import {
   SECTION2_PARAM_KEYS, ITEM_FILTER_UNSUPPORTED,
   type FilterRequest, type PeriodLabel, type Section2ParamKey,
@@ -87,23 +88,35 @@ interface Props {
   appliedContext: AppliedContext | null;
   onApply: (req: FilterRequest) => void;
   onClear: () => void;
+  /**
+   * The filter to start from - the one reopened from the page's URL. Read once, when the bar is
+   * created (the parent re-creates it with a new key to load another). Without it the bar opens on
+   * the defaults, the same for everyone: Time Range, Yesterday, every parameter ticked.
+   */
+  initial?: FilterRequest | null;
 }
 
-export default function FilterBar({ calcState, appliedContext, onApply, onClear }: Props) {
-  const [filterMode, setFilterMode] = useState<'time' | 'cycle' | 'metal'>('time');
-  const [activePeriod, setActivePeriod] = useState<PeriodLabel | 'custom'>('day');
-  const [customStart, setCustomStart]   = useState('');
-  const [customEnd, setCustomEnd]       = useState('');
-  const [cycleFrom, setCycleFrom]       = useState('');
-  const [cycleTo, setCycleTo]           = useState('');
-  const [itemName, setItemName]         = useState('');
+export default function FilterBar({ calcState, appliedContext, onApply, onClear, initial }: Props) {
+  const isCustomTime = initial?.filterBy === 'time' && !initial.periodLabel;
+  const [filterMode, setFilterMode] = useState<'time' | 'cycle' | 'metal'>(initial?.filterBy ?? 'time');
+  const [activePeriod, setActivePeriod] = useState<PeriodLabel | 'custom'>(() =>
+    initial?.filterBy === 'time'
+      ? (initial.periodLabel && PERIODS.includes(initial.periodLabel as PeriodLabel)
+          ? initial.periodLabel as PeriodLabel
+          : 'custom')
+      : 'day');
+  const [customStart, setCustomStart]   = useState(isCustomTime ? toLocalInputValue(initial!.filterStart) : '');
+  const [customEnd, setCustomEnd]       = useState(isCustomTime ? toLocalInputValue(initial!.filterEnd) : '');
+  const [cycleFrom, setCycleFrom]       = useState(initial?.filterCycleFrom != null ? String(initial.filterCycleFrom) : '');
+  const [cycleTo, setCycleTo]           = useState(initial?.filterCycleTo != null ? String(initial.filterCycleTo) : '');
+  const [itemName, setItemName]         = useState(initial?.filterMetalName ?? '');
   const [validationMsg, setValidationMsg] = useState<string | null>(null);
 
-  // Per-parameter calculation toggles. Default: everything selected. Held here (not in a URL or
-  // localStorage) so the selection survives every apply/clear for as long as the page is open,
-  // and resets to "all" on reload — the safe default for a shared plant terminal.
+  // Per-parameter calculation toggles. Default: everything selected. Kept in this tab only, and in
+  // its URL once a filter is applied (see utils/filterUrl.ts), never on the server - so two people
+  // filtering at once cannot change each other's selection.
   const [selected, setSelected] = useState<Set<Section2ParamKey>>(
-    () => new Set(SECTION2_PARAM_KEYS),
+    () => new Set(initial?.selectedParameters?.length ? initial.selectedParameters : SECTION2_PARAM_KEYS),
   );
 
   const busy = calcState === 'submitting' || calcState === 'polling';

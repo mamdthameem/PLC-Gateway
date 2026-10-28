@@ -1,6 +1,10 @@
-// Authenticated dashboard user (from the backend JWT). Single-site only — no tenant,
-// customer, or subscription concept exists in this client app.
-export type UserRole = 'admin' | 'user';
+// The signed-in person, as the gateway sees them (GET /api/auth/me). Single-site only — the gateway
+// accepts only its own client's people. Role "admin" or "viewer"; the old shared login's "user"
+// arrives as "viewer".
+export type UserRole = 'admin' | 'viewer';
+
+/** How they signed in: their own email, a ShotSense office email (admin on every site), or the emergency local admin. */
+export type LoginKind = 'firebase' | 'office' | 'local-admin';
 
 export interface User {
   id: string;
@@ -8,6 +12,7 @@ export interface User {
   email: string;
   name: string;
   role: UserRole;
+  login: LoginKind;
 }
 
 // Live machine status (plc_current_values WHERE address = 'DB60.DBB0') joined with the
@@ -59,13 +64,6 @@ export interface SpareStatus {
   triggerActive: boolean;
   lastReplacedAt: string | null;
   lastUpdatedAt: string;
-}
-
-// gateway_settings — which impellers the site includes. Machine-wide: it decides which impellers
-// every panel shows AND which ones energy, the Section 2 current split and spare monitoring count.
-export interface ImpellerSelection {
-  selected: number[];
-  maxImpellers: number;
 }
 
 // GET /api/license — what the dashboard lock screen shows. See LicenseCheckService for the rules.
@@ -201,6 +199,25 @@ export interface FilterStatus {
   processedAt?: string | null;
 }
 
+/**
+ * One saved request (GET /api/filter/{id}): what was asked for and where it stands. Used to reopen
+ * a result named in the page's URL. Times carry the gateway's offset, e.g. "…T00:00:00+05:30".
+ * `selectedParameters` null means every parameter was computed.
+ */
+export interface FilterRequestInfo {
+  requestId: number;
+  status: FilterStatus['status'];
+  filterBy: 'time' | 'cycle' | 'metal';
+  filterStart: string;
+  filterEnd: string;
+  periodLabel: string | null;
+  filterCycleFrom: number | null;
+  filterCycleTo: number | null;
+  filterMetalName: string | null;
+  selectedParameters: string[] | null;
+  processedAt: string | null;
+}
+
 export interface FilterResult {
   parameterName: string;
   value: string;
@@ -217,6 +234,9 @@ export interface FilteredCycle {
   cycleNumber: number;
   blastStart: string;
   blastEnd: string;
+  /** How long the cycle ran, in seconds — recorded time only (a gap while the gateway was not
+   *  recording is left out), so it can be less than end − start. */
+  durationSec: number;
   metal1Name: string | null;
   metal1WeightKg: number | null;
   metal2Name: string | null;

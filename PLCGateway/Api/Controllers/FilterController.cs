@@ -80,6 +80,50 @@ public class FilterController : ControllerBase
     }
 
     /// <summary>
+    /// One saved request: what was asked for (mode, window or cycles or item, the parameter
+    /// toggles) and its status. The dashboard calls this when a page opens with ?result=&lt;id&gt; in
+    /// its URL, to show that saved result again without recomputing it.
+    ///
+    /// Signed-in users only (the controller is [Authorize]): a result id copied from a URL is useless
+    /// to anyone who cannot log in to this gateway. Times carry the gateway's UTC offset
+    /// (e.g. +05:30), because they are stored as plant wall-clock time and a browser elsewhere would
+    /// otherwise read them as its own local time.
+    /// </summary>
+    [HttpGet("{id:int}")]
+    public async Task<IActionResult> GetRequest(int id)
+    {
+        try
+        {
+            var r = await _service.GetRequestAsync(id);
+            if (r is null)
+                return NotFound(new { error = $"Request {id} not found" });
+
+            return Ok(new
+            {
+                requestId          = r.RequestId,
+                status             = r.Status,
+                filterBy           = r.FilterBy,
+                filterStart        = PlantTime(r.FilterStart),
+                filterEnd          = PlantTime(r.FilterEnd),
+                periodLabel        = r.PeriodLabel,
+                filterCycleFrom    = r.FilterCycleFrom,
+                filterCycleTo      = r.FilterCycleTo,
+                filterMetalName    = r.FilterMetalName,
+                selectedParameters = r.SelectedParameters,
+                processedAt        = r.ProcessedAt is { } p ? PlantTime(p) : (DateTimeOffset?)null,
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to fetch request {Id}", id);
+            return StatusCode(500, new { error = "Failed to fetch request" });
+        }
+    }
+
+    private static DateTimeOffset PlantTime(DateTime stored) =>
+        new(DateTime.SpecifyKind(stored, DateTimeKind.Local));
+
+    /// <summary>
     /// Scalar results from plc_filtered_parameters once status is 'done'.
     /// </summary>
     [HttpGet("{id}/results")]

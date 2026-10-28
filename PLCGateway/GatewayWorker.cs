@@ -181,14 +181,15 @@ public class GatewayWorker : BackgroundService
             _logger.LogError(ex, "Failed to seed scan cache; starting empty.");
         }
 
+        ApplyPlcAddressChange();
         try
         {
             _plcService.Connect();
-            _logger.LogInformation("Connected to PLC.");
+            _logger.LogInformation("Connected to PLC at {plc}.", _plcService.Endpoint);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Initial PLC connection failed; worker will retry in loop.");
+            _logger.LogWarning(ex, "Initial PLC connection to {plc} failed; worker will retry in loop.", _plcService.Endpoint);
         }
 
         while (!stoppingToken.IsCancellationRequested)
@@ -197,6 +198,7 @@ public class GatewayWorker : BackgroundService
 
             try
             {
+                ApplyPlcAddressChange();
                 try { _plcService.Connect(); }
                 catch (Exception ex) { _logger.LogWarning(ex, "PLC connect attempt failed in loop."); }
 
@@ -222,6 +224,15 @@ public class GatewayWorker : BackgroundService
         }
 
         _logger.LogInformation("GatewayWorker stopping.");
+    }
+
+    // A new PLC address saved from the cloud (PUT /api/admin/settings/plc) is switched to here, between
+    // passes, never in the middle of a read. The next pass connects to it; if it cannot, the usual
+    // disconnect handling applies.
+    private void ApplyPlcAddressChange()
+    {
+        if (_plcService.ApplyPendingEndpoint())
+            _logger.LogWarning("PLC address changed: now reading the PLC at {plc}.", _plcService.Endpoint);
     }
 
     // Reads all DB regions, parses every tag, and writes one batched Tier 1 + Tier 2 pass.
